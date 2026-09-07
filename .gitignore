@@ -15,3 +15,4 @@ skills-lock.json
 .worktrees/
 src/prototypes/
 experts/
+.zcode/
