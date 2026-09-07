@@ -1,0 +1,17 @@
+node_modules/
+dist/
+coverage/
+*.lock
+!package-lock.json
+*.tmp
+.DS_Store
+promo/
+artifacts/releases/
+*.pyc
+skills/*.zip
+.agents
+skills-lock.json
+.scratch
+.worktrees/
+src/prototypes/
+experts/

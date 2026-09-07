@@ -1,0 +1,4 @@
+# Web profile 的全局只读适配器；客户端入口由 package.json 的 dsh.client 发现。
+- insert:
+    - id: dsh-moneypal
+      name: dsh-moneypal

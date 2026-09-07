@@ -1,0 +1,36 @@
+{
+  "name": "moneypal-workspace",
+  "version": "1.0.0-rc.2",
+  "private": true,
+  "type": "module",
+  "description": "MoneyPal 的 DSH 与 MCP npm 包工作区。",
+  "scripts": {
+    "build": "node scripts/clean-build.mjs && tsc -p tsconfig.json && node scripts/copy-bridge.mjs && node scripts/build-client-bundle.mjs && node --check dist/src/client.bundle.cjs && node scripts/build-release-packages.mjs && node scripts/build-expert.mjs",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "install-preset": "node dist/src/main.js install-preset",
+    "test:fast:built": "node --test dist/test/balance-host.test.js dist/test/batches.test.js dist/test/beancount-only-contract.test.js dist/test/client-ui.test.js dist/test/expert-package.test.js dist/test/init-ledger.test.js dist/test/install-preset.test.js dist/test/package-split.test.js dist/test/register-contract.test.js dist/test/release-gates.test.js dist/test/statements-contract.test.js",
+    "test:fast": "npm run build && npm run test:fast:built",
+    "test:integration:built": "node --test dist/test/*.test.js",
+    "test:integration": "npm run build && npm run test:integration:built",
+    "test": "npm run test:integration",
+    "prepublishOnly": "node scripts/refuse-root-publish.mjs",
+    "pack:check:built": "npm pack --dry-run ./dist/packages/dsh-moneypal && npm pack --dry-run ./dist/packages/mcp-moneypal",
+    "pack:check": "npm run build && npm run pack:check:built",
+    "release:preflight": "node scripts/release-preflight.mjs",
+    "release:tarballs:built": "node scripts/release-tarballs.mjs",
+    "release:tarballs": "npm run build && npm run release:tarballs:built",
+    "test:release": "npm run build && npm run test:integration:built && npm run pack:check:built && npm run release:tarballs:built",
+    "release:acceptance": "node scripts/release-acceptance.mjs",
+    "release:promote": "node scripts/release-promote.mjs",
+    "publish:dsh": "npm run build && npm publish ./dist/packages/dsh-moneypal --access public --tag next",
+    "publish:mcp": "npm run build && npm publish ./dist/packages/mcp-moneypal --access public --tag next"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.3",
+    "typescript": "^5.9.3"
+  },
+  "engines": {
+    "node": ">=22.18"
+  },
+  "packageManager": "npm@11.14.1"
+}

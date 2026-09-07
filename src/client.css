@@ -1,0 +1,519 @@
+/*
+ * MoneyPal 余额抽屉样式（A 方案：轻量清单）。
+ *
+ * 约束：
+ * - 所有选择器都限定在 dsh-moneypal-balance 命名空间内，不得影响宿主文档。
+ * - 颜色一律经由下方 MoneyPal 局部语义变量引用宿主 DSH token；这些 token 已在
+ *   DSH packages/client/ui-theme/src/styles/design-platform.css（alias/static）、
+ *   gradient-shadow-text.css（阴影）与 scrollbar.css（滚动条）中核验，亮暗主题各自换值。
+ * - 宿主缺少某个 token 时回退到主题感知的系统色（Canvas/CanvasText/GrayText 等），
+ *   并保留文字与形状区分（提示是独立文本，不单靠颜色）。
+ * - 关键尺寸对齐 demo：工具栏 21px 20px 12px、标题 18px、内容区 22px 20px 24px、
+ *   主金额 30px、次金额 15px、明细金额 13px、主要分区间隔 23px。
+ */
+
+.dsh-moneypal-balance-drawer {
+  /* 背景与文字 */
+  --dsh-moneypal-balance-surface: var(--dsw-specific-menu, Canvas);
+  --dsh-moneypal-balance-ink: var(--dsw-alias-label-primary, CanvasText);
+  --dsh-moneypal-balance-muted: var(--dsw-alias-label-secondary, GrayText);
+  --dsh-moneypal-balance-faint: var(--dsw-alias-label-tertiary, GrayText);
+  --dsh-moneypal-balance-caption: var(--dsw-alias-label-caption, GrayText);
+  /* 边框 */
+  --dsh-moneypal-balance-line: var(--dsw-alias-border-l2, ButtonBorder);
+  --dsh-moneypal-balance-hairline: var(--dsw-alias-border-l1, ButtonBorder);
+  /* 强调与交互背景 */
+  --dsh-moneypal-balance-accent: var(--dsw-alias-link, Highlight);
+  --dsh-moneypal-balance-hover: var(--dsw-alias-interactive-bg-hover, ButtonFace);
+  --dsh-moneypal-balance-active: var(--dsw-alias-interactive-bg-active, ButtonFace);
+  --dsh-moneypal-balance-fill: var(--dsw-alias-button-info-fill, Highlight);
+  --dsh-moneypal-balance-on-fill: #fff;
+  /* 提示与状态 */
+  --dsh-moneypal-balance-warn: var(--dsw-alias-state-warn-label, CanvasText);
+  --dsh-moneypal-balance-warn-bg: var(--dsw-alias-state-warn-tertiary, transparent);
+  --dsh-moneypal-balance-live: var(--dsw-alias-state-success-primary, CanvasText);
+  --dsh-moneypal-balance-skeleton: var(--dsw-alias-bg-skeleton, ButtonFace);
+  --dsh-moneypal-balance-focus: var(--dsw-alias-state-business-primary, Highlight);
+  /* 阴影：跟随宿主悬浮面板的 elevation 三件套，描边取最浅一档（同宿主菜单面）。 */
+  --dsw-elevation-stroke-color: var(--dsw-alias-border-l1);
+
+  position: fixed;
+  inset: 0 0 0 auto;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  width: 360px;
+  max-width: 100vw;
+  background: var(--dsh-moneypal-balance-surface);
+  color: var(--dsh-moneypal-balance-ink);
+  box-shadow: var(--dsw-elevation-prominent, var(--dsw-shadow-lv3));
+  font-size: 14px;
+}
+
+@media (max-width: 767px) {
+  .dsh-moneypal-balance-drawer { width: 100vw; }
+}
+
+/* 移动端模态背景隔离：全屏遮罩挡住宿主交互，点击关闭；桌面（≥768px）组件不渲染遮罩。 */
+.dsh-moneypal-balance-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 999;
+  border: 0;
+  padding: 0;
+  background: rgb(0 0 0 / 45%);
+}
+
+@media (min-width: 768px) {
+  .dsh-moneypal-balance-backdrop { display: none; }
+}
+
+/* 工具栏：标题 + 图标按钮 */
+.dsh-moneypal-balance-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 21px 20px 12px;
+}
+
+.dsh-moneypal-balance-title {
+  flex: 1;
+  min-width: 0;
+}
+
+.dsh-moneypal-balance-title h2 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: -0.5px;
+}
+
+.dsh-moneypal-balance-subtitle {
+  display: block;
+  margin-top: 5px;
+  font-size: 10px;
+  color: var(--dsh-moneypal-balance-muted);
+}
+
+.dsh-moneypal-balance-icon {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--dsh-moneypal-balance-faint);
+  cursor: pointer;
+}
+
+.dsh-moneypal-balance-icon:hover {
+  background: var(--dsh-moneypal-balance-hover);
+  color: var(--dsh-moneypal-balance-accent);
+}
+
+.dsh-moneypal-balance-icon:active {
+  background: var(--dsh-moneypal-balance-active);
+}
+
+.dsh-moneypal-balance-icon:disabled {
+  cursor: wait;
+  opacity: 0.5;
+}
+
+.dsh-moneypal-balance-icon svg {
+  width: 17px;
+  height: 17px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* 页签：3px 选中下划线 */
+.dsh-moneypal-balance-tab-wrap {
+  flex: none;
+  padding: 7px 20px 0;
+}
+
+.dsh-moneypal-balance-tabs {
+  display: flex;
+  gap: 25px;
+  border-bottom: 1px solid var(--dsh-moneypal-balance-line);
+}
+
+.dsh-moneypal-balance-tab {
+  position: relative;
+  padding: 10px 3px 12px;
+  border: 0;
+  background: transparent;
+  color: var(--dsh-moneypal-balance-muted);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.dsh-moneypal-balance-tab[aria-selected="true"] {
+  color: var(--dsh-moneypal-balance-accent);
+  font-weight: 650;
+}
+
+.dsh-moneypal-balance-tab[aria-selected="true"]::after {
+  content: "";
+  position: absolute;
+  bottom: -1px;
+  left: 0;
+  right: 0;
+  height: 3px;
+  border-radius: 3px;
+  background: var(--dsh-moneypal-balance-accent);
+}
+
+/* 页签下方的刷新失败横幅 */
+.dsh-moneypal-balance-banner {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 20px;
+  background: var(--dsh-moneypal-balance-warn-bg);
+  color: var(--dsh-moneypal-balance-warn);
+  font-size: 10px;
+  line-height: 1.7;
+}
+
+.dsh-moneypal-balance-banner p {
+  flex: 1;
+  margin: 0;
+}
+
+.dsh-moneypal-balance-banner-retry {
+  flex: none;
+  margin-left: auto;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: inherit;
+  white-space: nowrap;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+/* 内容区 */
+.dsh-moneypal-balance-content {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 22px 20px 24px;
+  /* DSH 滚动条皮肤：悬浮面板层级复用 l2 档（同宿主 Panel 的做法）。 */
+  --dsh-scrollbar-thumb: var(--dsw-alias-scrollbar-bg-l2);
+  --dsh-scrollbar-thumb-hover: var(--dsw-alias-scrollbar-hover-l2);
+}
+
+/* 首次加载骨架 */
+.dsh-moneypal-balance-loading-note {
+  font-size: 12px;
+  color: var(--dsh-moneypal-balance-faint);
+}
+
+.dsh-moneypal-balance-skeleton {
+  height: 16px;
+  margin: 16px 0 24px;
+  border-radius: 5px;
+  background: var(--dsh-moneypal-balance-skeleton);
+}
+
+/* 空状态 / 读取失败 */
+.dsh-moneypal-balance-state-message {
+  padding: 75px 18px;
+  text-align: center;
+  color: var(--dsh-moneypal-balance-faint);
+  font-size: 12px;
+  line-height: 1.9;
+}
+
+.dsh-moneypal-balance-state-icon {
+  display: grid;
+  place-items: center;
+  width: 52px;
+  height: 52px;
+  margin: 0 auto 17px;
+  border-radius: 16px;
+  background: var(--dsh-moneypal-balance-hover);
+  color: var(--dsh-moneypal-balance-accent);
+  font-size: 25px;
+}
+
+.dsh-moneypal-balance-state-message h4 {
+  margin: 0 0 8px;
+  color: var(--dsh-moneypal-balance-ink);
+  font-size: 15px;
+}
+
+.dsh-moneypal-balance-state-action {
+  margin-top: 12px;
+  padding: 9px 19px;
+  border: 0;
+  border-radius: 7px;
+  background: var(--dsh-moneypal-balance-fill);
+  color: var(--dsh-moneypal-balance-on-fill);
+  font: inherit;
+  cursor: pointer;
+}
+
+/* 金额：数值、币种、负值说明各自独立元素；空间不足时上下排列，不截断、不舍入 */
+.dsh-moneypal-balance-amount {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.4px;
+}
+
+.dsh-moneypal-balance-amount-value {
+  white-space: nowrap;
+  overflow-wrap: anywhere;
+}
+
+.dsh-moneypal-balance-currency {
+  margin-left: 5px;
+  color: var(--dsh-moneypal-balance-faint);
+  font-size: 10px;
+  letter-spacing: 0;
+  font-weight: 400;
+}
+
+.dsh-moneypal-balance-amount-empty {
+  color: var(--dsh-moneypal-balance-faint);
+}
+
+.dsh-moneypal-balance-negative {
+  color: var(--dsh-moneypal-balance-warn);
+}
+
+.dsh-moneypal-balance-amount-warning {
+  display: block;
+  margin-top: 3px;
+  color: var(--dsh-moneypal-balance-warn);
+  font-size: 9px;
+  letter-spacing: 0;
+  font-weight: 400;
+}
+
+/* 分组标记与分区标题 */
+.dsh-moneypal-balance-section-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 12px;
+  color: var(--dsh-moneypal-balance-muted);
+  font-size: 12px;
+}
+
+.dsh-moneypal-balance-section-label em {
+  margin-left: auto;
+  font-style: normal;
+  font-size: 10px;
+  color: var(--dsh-moneypal-balance-caption);
+}
+
+.dsh-moneypal-balance-marker {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 2px;
+  background: var(--dsh-moneypal-balance-accent);
+}
+
+.dsh-moneypal-balance-debt .dsh-moneypal-balance-marker {
+  background: var(--dsh-moneypal-balance-warn);
+}
+
+/* 概览：主要分区与合计 */
+.dsh-moneypal-balance-section-block {
+  margin-bottom: 23px;
+  padding-bottom: 23px;
+  border-bottom: 1px solid var(--dsh-moneypal-balance-line);
+}
+
+.dsh-moneypal-balance-total-main {
+  margin: 0;
+  font-size: 30px;
+  font-weight: 550;
+  line-height: 1.3;
+}
+
+.dsh-moneypal-balance-debt .dsh-moneypal-balance-total-main {
+  color: var(--dsh-moneypal-balance-warn);
+}
+
+.dsh-moneypal-balance-total-secondary {
+  margin: 7px 0 0;
+  font-size: 15px;
+  color: var(--dsh-moneypal-balance-muted);
+}
+
+.dsh-moneypal-balance-inline-info {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 13px 0 0;
+  color: var(--dsh-moneypal-balance-faint);
+  font-size: 11px;
+}
+
+.dsh-moneypal-balance-caption-line {
+  margin: 17px 0 0;
+  color: var(--dsh-moneypal-balance-faint);
+  font-size: 11px;
+  line-height: 1.8;
+}
+
+/* 概览：账户一览迷你行 */
+.dsh-moneypal-balance-mini-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--dsh-moneypal-balance-hairline);
+  font-size: 12px;
+}
+
+.dsh-moneypal-balance-mini-name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.dsh-moneypal-balance-mini-row .dsh-moneypal-balance-amount {
+  flex: none;
+  font-size: 13px;
+}
+
+/* 跳转链接 */
+.dsh-moneypal-balance-jump {
+  display: flex;
+  width: 100%;
+  justify-content: space-between;
+  padding: 13px 0 0;
+  border: 0;
+  background: none;
+  color: var(--dsh-moneypal-balance-accent);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+/* 明细：分组 */
+.dsh-moneypal-balance-group-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 0;
+  background: var(--dsh-moneypal-balance-surface);
+  border-bottom: 1px solid var(--dsh-moneypal-balance-line);
+  font-size: 12px;
+}
+
+.dsh-moneypal-balance-group-head small {
+  font-size: 10px;
+  color: var(--dsh-moneypal-balance-caption);
+}
+
+.dsh-moneypal-balance-account {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 13px 0;
+  border-bottom: 1px solid var(--dsh-moneypal-balance-hairline);
+}
+
+.dsh-moneypal-balance-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.dsh-moneypal-balance-path {
+  display: block;
+  margin-top: 2px;
+  color: var(--dsh-moneypal-balance-caption);
+  font-size: 9px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.dsh-moneypal-balance-account-values {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: 5px;
+  padding-top: 2px;
+  min-width: 0;
+  text-align: right;
+}
+
+.dsh-moneypal-balance-account-values .dsh-moneypal-balance-amount {
+  font-size: 13px;
+}
+
+.dsh-moneypal-balance-account-values .dsh-moneypal-balance-currency {
+  margin-left: 3px;
+  font-size: 9px;
+}
+
+.dsh-moneypal-balance-group-total {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 15px;
+  margin: 0;
+  padding: 13px 0 22px;
+  color: var(--dsh-moneypal-balance-faint);
+  font-size: 10px;
+}
+
+.dsh-moneypal-balance-group-total .dsh-moneypal-balance-amount {
+  font-size: 11px;
+}
+
+/* 底部状态栏 */
+.dsh-moneypal-balance-footer {
+  flex: none;
+  display: flex;
+  justify-content: space-between;
+  padding: 13px 20px;
+  border-top: 1px solid var(--dsh-moneypal-balance-line);
+  background: var(--dsh-moneypal-balance-surface);
+  color: var(--dsh-moneypal-balance-faint);
+  font-size: 10px;
+}
+
+.dsh-moneypal-balance-dot {
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  margin-right: 5px;
+  border-radius: 50%;
+  background: var(--dsh-moneypal-balance-live);
+  vertical-align: 2px;
+}
+
+/* 键盘焦点：跟随宿主的强调色描边约定 */
+.dsh-moneypal-balance-icon:focus-visible,
+.dsh-moneypal-balance-tab:focus-visible,
+.dsh-moneypal-balance-jump:focus-visible,
+.dsh-moneypal-balance-banner-retry:focus-visible,
+.dsh-moneypal-balance-state-action:focus-visible,
+.dsh-moneypal-balance-drawer:focus-visible {
+  outline: 2px solid var(--dsh-moneypal-balance-focus);
+  outline-offset: 2px;
+}

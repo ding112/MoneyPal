@@ -1,0 +1,58 @@
+{
+  "name": "dsh-moneypal",
+  "type": "module",
+  "description": "DSH Web 的 MoneyPal Beancount 财务工具插件，提供受确认保护的账本查询与记账。",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ding112/MoneyPal.git"
+  },
+  "homepage": "https://github.com/ding112/MoneyPal#readme",
+  "bugs": {
+    "url": "https://github.com/ding112/MoneyPal/issues"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/src/index.d.ts",
+      "import": "./dist/src/index.js"
+    },
+    "./dsh": {
+      "types": "./dist/src/dsh.d.ts",
+      "import": "./dist/src/dsh.js"
+    },
+    "./client": {
+      "types": "./dist/src/client.d.ts",
+      "default": "./dist/src/client.bundle.cjs"
+    },
+    "./package.json": "./package.json"
+  },
+  "bin": {
+    "dsh-moneypal": "dist/src/main.js"
+  },
+  "files": [
+    "dist/src",
+    "!dist/src/**/*.js.map",
+    "cordis.patch.yml"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-ui-conversation",
+        "@deepseek-ai/dsh-client-ui-layout",
+        "@deepseek-ai/dsh-client-connection"
+      ],
+      "platform": "web"
+    }
+  },
+  "engines": {
+    "node": ">=22.18"
+  },
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org/",
+    "access": "public",
+    "tag": "next"
+  }
+}

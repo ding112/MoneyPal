@@ -1,0 +1,48 @@
+# DSH 插件开发规范
+
+本文件是本仓库 DSH 与 MCP 插件开发的唯一权威规范，覆盖依赖边界、服务访问、注册语义、工具契约、错误边界和验证流程。修改插件入口、服务注入、工具契约、宿主注册、运行时依赖或发布流程前，必须先阅读本文并按其执行。
+
+规范以当前安装的 DSH（0.1.1-rc.2）与 Cordis（4.0.1）的实际行为为准。外部文章、剪藏和针对旧 RC 版本的经验只作参考；升级 DSH 后必须重新核对实际 API，再更新本文与 `src/` 中的本地类型。
+
+## 依赖边界
+
+- 源码使用 TypeScript（`src/`），两个发布包（`dsh-moneypal`、`mcp-moneypal`）只包含预编译 JavaScript、`.d.ts` 和静态资源；不得把 TypeScript 源码作为运行时入口发布。
+- DSH 后端代码只导入 Node 内置模块（`node:` 前缀）和包内相对模块。Cordis 服务是宿主能力，通过注入获得，不通过 npm 依赖获得。
+- 发布包清单不得声明 `dependencies`、`devDependencies`、`optionalDependencies`、`peerDependencies`、`bundledDependencies`，也不得声明 `preinstall`、`install`、`postinstall` 等安装期脚本。
+- 根工作区使用 npm：`packageManager` 固定为具体版本（当前 `npm@11.14.1`），继续使用 `package-lock.json`；不引入 pnpm 或 yarn 文件。
+- MoneyPal 的 Python/Beancount 环境是显式的外部运行时：由 `setup-runtime` 安装或 `MONEYPAL_PYTHON` 指定。插件代码不得隐式安装、升级或静默更换解释器。
+
+## 服务访问
+
+- 硬依赖服务使用一维字符串数组 `inject` 声明（例如 `["tools", "userQuestions", "systemPrompt"]`、`["sessions", "connection"]`），使用稳定的服务名，不使用嵌套路径。
+- 可选服务不写入 `inject`；使用前通过 `ctx.get(name)` 检查可用性，不可用时给出明确的错误或降级路径。
+- `logger` 是 Cordis 内建服务，随 Context 必定存在：直接调用 `ctx.logger.warn(...)` 等方法，不写入 `inject`。本地类型把它建模为必需字段，不使用可选链。
+- 不得用可选链掩盖未声明的服务；缺失的硬依赖必须显式失败，而不是静默降级。MCP 服务器是普通 Node 进程，不涉及 Cordis 注入，但工具契约与错误边界规则同样适用。
+
+## 注册语义
+
+- 工具、RPC 通道、system prompt section 和客户端 slot 都使用 `dsh-moneypal` 命名空间下的稳定名称；发布后不得改名。
+- 同层重名必须 fail-loud：DSH/Cordis 对重复注册的官方语义是显式失败。不实现自动换名、覆盖或 fallback。
+- 一切注册必须由 Cordis 生命周期持有：在 `apply(ctx)` 内通过注册 API 或 `ctx.effect` 完成，随插件卸载释放。模块作用域不得创建进程级单例、定时器、句柄或文件副作用。
+- 全局 RPC 适配器固定 `authority: "loopback"`；客户端不能传入账本路径，宿主只从当前已挂载会话解析工作区。
+
+## 工具契约
+
+- `ctx.tools.register` 必须提供完整 JSON Schema：`parameters` 与 `output` 都写出字段级约束，不用空 schema 交差。
+- DSH 与 MCP 共用同一份契约定义（`src/finance/contract.ts`）：工具名、描述、参数 Schema 和输出形状单一来源，两个包不得各自漂移。
+- 工具名、参数名、错误码和输出字段是公开契约：只能新增，不能改名或删除；破坏性变更必须升版本并在发布说明中声明。
+- 错误统一使用 `FinanceError` 与 `errorResponse` 的结构化形状：`code` 加 `message`，需要修复指引时附 `diagnostics`。
+
+## 错误边界
+
+- 工具边界、RPC 边界、子进程边界和文件写入边界都必须捕获异常，并净化为稳定、可操作的结构化信息；原始异常文本、文件路径、解释器输出和堆栈不得进入对外响应。
+- 日志只记录稳定的事件码与固定消息（例如 `dsh-moneypal balance RPC <code>`），不记录账本细节、路径或原始异常。
+- 写入操作 fail-closed：失败即保持账本不变；需要人工确认的写入绝不跳过确认；结果不确定（`write_outcome_uncertain`）时禁止自动重试，必须先查询正式账本，再由人决定下一步。
+
+## 验证流程
+
+日常开发先运行 `npm run test:fast`，并按改动补跑对应的已编译测试文件，例如 `npm run build && node --test dist/test/balance-host.test.js`。快速套件只覆盖稳定的单元与契约测试，不替代写入、MCP、bridge 或真实运行时测试。
+
+合并前运行 `npm test`（等同 `npm run test:integration`），它会构建并执行全部测试。修改插件入口、`inject`、工具 Schema、宿主注册、依赖或发布流程时，运行 `npm run test:release`；该命令只构建一次，随后执行全量测试、包检查与两个 tarball 的隔离安装 smoke test。
+
+正式发布仍须在干净 checkout 中另行运行 `npm run release:preflight`，再按发布验收记录完成 registry 与真实宿主验证。全部通过后检查最终差异：确认没有 pnpm 文件、构建生成物或公开契约漂移进入提交。

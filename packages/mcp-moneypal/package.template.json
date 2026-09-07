@@ -1,0 +1,36 @@
+{
+  "name": "mcp-moneypal",
+  "type": "module",
+  "description": "通过 MCP stdio 提供 Beancount 账本查询和受确认保护记账的 MoneyPal 服务器。",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ding112/MoneyPal.git"
+  },
+  "homepage": "https://github.com/ding112/MoneyPal#readme",
+  "bugs": {
+    "url": "https://github.com/ding112/MoneyPal/issues"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/src/mcp/server.d.ts",
+      "import": "./dist/src/mcp/server.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "bin": {
+    "mcp-moneypal": "dist/src/mcp-main.js"
+  },
+  "files": [
+    "dist/src",
+    "!dist/src/**/*.js.map",
+    "skills"
+  ],
+  "engines": {
+    "node": ">=22.18"
+  },
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org/",
+    "access": "public",
+    "tag": "next"
+  }
+}
