@@ -193,6 +193,7 @@ function textOf(node: unknown): string {
   return textOf(node.props.children);
 }
 const classNameOf = (element: Element): string => String(element.props.className ?? "");
+const hasClass = (element: Element, name: string) => classNameOf(element).split(" ").includes(`dsh-moneypal-balance-${name}`);
 const tick = () => new Promise((resolve) => setImmediate(resolve));
 
 function createDocument() {
@@ -462,44 +463,51 @@ test("探测失败后统一重试入口：告警横幅、重新探测恢复新�
   h.react.runEffects(); await tick();
   const fresh = renderSlot(h, h.drawer, { useSessions: useSessionsFor("ledger") });
   h.react.runEffects();
-  assert.equal(findAll(fresh, (element) => classNameOf(element).includes("banner")).length, 0, "正常状态不应显示横幅");
+  assert.equal(findAll(fresh, (element) => hasClass(element, "banner")).length, 0, "正常状态不应显示横幅");
 
-  // 探测失败：保留旧快照，横幅转为失败告警
+  // 探测与余额同时失败（后端不可用）：保留旧快照，横幅转为失败告警
   h.rpc.capabilityOk = false;
+  h.rpc.balancesError = { code: "balances_unavailable", message: "读取余额失败" };
   fireVisibility(h);
   await tick(); h.react.runEffects();
   const staleTree = renderSlot(h, h.drawer, { useSessions: useSessionsFor("ledger") });
   h.react.runEffects();
   assert.ok(textOf(staleTree).includes("C-现金"), "探测失败应保留旧快照");
-  const banner = findOne(staleTree, (element) => classNameOf(element).includes("banner"), "探测失败后未显示过期横幅");
+  const banner = findOne(staleTree, (element) => hasClass(element, "banner"), "探测失败后未显示过期横幅");
   const message = findOne(banner, (element) => element.type === "p", "横幅缺少消息");
   assert.equal(message.props.role, "alert", "探测失败提示应为 alert");
   assert.ok(textOf(banner).includes("刷新失败"), `横幅应显示失败提示：${textOf(banner)}`);
 
   // 点击重试应重新探测（能力未知时刷新是 no-op，能读到新数据即证明走了探测路径）
   h.rpc.capabilityOk = true;
+  h.rpc.balancesError = undefined;
   h.rpc.balances = variantSnapshot("重试恢复");
-  (findOne(banner, (element) => classNameOf(element).includes("banner-retry"), "横幅缺少重试按钮").props.onClick as () => void)();
+  (findOne(banner, (element) => hasClass(element, "banner-retry"), "横幅缺少重试按钮").props.onClick as () => void)();
   await tick(); h.react.runEffects();
   const recovered = renderSlot(h, h.drawer, { useSessions: useSessionsFor("ledger") });
   h.react.runEffects();
-  assert.equal(findAll(recovered, (element) => classNameOf(element).includes("banner")).length, 0, "重试成功后横幅应消失");
+  assert.equal(findAll(recovered, (element) => hasClass(element, "banner")).length, 0, "重试成功后横幅应消失");
   assert.ok(textOf(recovered).includes("C-现金·重试恢复"), "重试成功后应读取新余额");
 
-  // 持续失败：保留旧快照并保持失败提示
+  // 持续失败（重试后仍失败）：保留旧快照并保持失败提示
   h.rpc.capabilityOk = false;
+  h.rpc.balancesError = { code: "balances_unavailable", message: "读取余额失败" };
   fireVisibility(h);
   await tick(); h.react.runEffects();
   const failedTree = renderSlot(h, h.drawer, { useSessions: useSessionsFor("ledger") });
   h.react.runEffects();
   assert.ok(textOf(failedTree).includes("C-现金·重试恢复"), "再次失败应保留旧快照");
-  const failedBanner = findOne(failedTree, (element) => classNameOf(element).includes("banner"), "失败后应显示横幅");
-  (findOne(failedBanner, (element) => classNameOf(element).includes("banner-retry"), "横幅缺少重试按钮").props.onClick as () => void)();
+  const failedBanner = findOne(failedTree, (element) => hasClass(element, "banner"), "失败后应显示横幅");
+  (findOne(failedBanner, (element) => hasClass(element, "banner-retry"), "横幅缺少重试按钮").props.onClick as () => void)();
   await tick(); h.react.runEffects();
   const stillTree = renderSlot(h, h.drawer, { useSessions: useSessionsFor("ledger") });
   h.react.runEffects();
+  // 此时 error 已被 retry 清空，失败提示只能来自 probeError：验证横幅同时识别探测失败
+  const stillBanner = findOne(stillTree, (element) => hasClass(element, "banner"), "仅探测失败也应显示横幅");
+  const stillMessage = findOne(stillBanner, (element) => element.type === "p", "横幅缺少消息");
+  assert.equal(stillMessage.props.role, "alert", "仅探测失败也应给出 alert");
+  assert.ok(textOf(stillBanner).includes("刷新失败"), "横幅应识别探测失败");
   assert.ok(textOf(stillTree).includes("C-现金·重试恢复"), "重试仍失败应保留旧快照");
-  assert.ok(textOf(stillTree).includes("刷新失败"), "重试仍失败应保持失败提示");
 });
 
 test("余额请求失败仍走余额刷新路径：横幅重试不触发重新探测", async () => {
@@ -516,7 +524,7 @@ test("余额请求失败仍走余额刷新路径：横幅重试不触发重新�
   const failed = renderSlot(h, h.drawer, { useSessions: useSessionsFor("ledger") });
   h.react.runEffects();
   assert.ok(textOf(failed).includes("C-现金"), "余额请求失败应保留旧快照");
-  const banner = findOne(failed, (element) => classNameOf(element).includes("banner"), "余额请求失败后未显示横幅");
+  const banner = findOne(failed, (element) => hasClass(element, "banner"), "余额请求失败后未显示横幅");
   const message = findOne(banner, (element) => element.type === "p", "横幅缺少消息");
   assert.equal(message.props.role, "alert", "余额失败提示应为 alert");
 
@@ -524,11 +532,11 @@ test("余额请求失败仍走余额刷新路径：横幅重试不触发重新�
   h.rpc.capabilityOk = false;
   h.rpc.balancesError = undefined;
   h.rpc.balances = variantSnapshot("刷新恢复");
-  (findOne(banner, (element) => classNameOf(element).includes("banner-retry"), "横幅缺少重试按钮").props.onClick as () => void)();
+  (findOne(banner, (element) => hasClass(element, "banner-retry"), "横幅缺少重试按钮").props.onClick as () => void)();
   await tick(); h.react.runEffects();
   const recovered = renderSlot(h, h.drawer, { useSessions: useSessionsFor("ledger") });
   h.react.runEffects();
-  assert.equal(findAll(recovered, (element) => classNameOf(element).includes("banner")).length, 0, "余额刷新恢复后横幅应消失");
+  assert.equal(findAll(recovered, (element) => hasClass(element, "banner")).length, 0, "余额刷新恢复后横幅应消失");
   assert.ok(textOf(recovered).includes("C-现金·刷新恢复"), "余额刷新应读取新快照");
 });
 
@@ -545,7 +553,7 @@ test("空账本且探测失败时空状态刷新按钮走重试路径", async ()
   await tick(); h.react.runEffects();
   const failed = renderSlot(h, h.drawer, { useSessions: useSessionsFor("ledger") });
   h.react.runEffects();
-  const action = findOne(failed, (element) => classNameOf(element).includes("state-action"), "空状态缺少刷新按钮");
+  const action = findOne(failed, (element) => hasClass(element, "state-action"), "空状态缺少刷新按钮");
   assert.equal(textOf(action), "刷新余额");
 
   // 能力未知时刷新是 no-op；按钮能恢复完整数据即证明走了重试探测路径
@@ -606,7 +614,7 @@ test("桌面切窄屏将外部焦点移入抽屉，关闭优先恢复触发入�
   h.react.runEffects();
   assert.equal(narrowRoot.focusCalls, 1, "切入窄屏应把外部焦点移入抽屉");
 
-  const closeButton = findOne(narrowTree, (element) => classNameOf(element).includes("icon") && element.props["aria-label"] === "关闭账户余额", "关闭按钮缺失");
+  const closeButton = findOne(narrowTree, (element) => hasClass(element, "icon") && element.props["aria-label"] === "关闭账户余额", "关闭按钮缺失");
   (closeButton.props.onClick as () => void)();
   await tick(); h.react.runEffects();
   assert.equal(entryNode.focusCalls, 1, "关闭后应优先恢复有效触发入口");
@@ -688,7 +696,8 @@ test("语言切换通知即时同步入口与抽屉文案，卸载后释放订�
   assert.equal(textOf(headerEn), "Balances", "入口文案应即时切换");
   const drawerEn = h.react.outputOf(h.drawer) as Element;
   assert.ok(textOf(drawerEn).includes("Account Balances"), `抽屉标题应即时切换：${textOf(drawerEn)}`);
-  assert.ok(textOf(drawerEn).includes("Refresh balances"), "抽屉操作文案应即时切换");
+  assert.ok(textOf(drawerEn).includes("Overview"), "页签文案应即时切换");
+  const refreshIcon = findOne(drawerEn, (element) => hasClass(element, "icon") && element.props["aria-label"] === "Refresh balances", "刷新按钮缺失或未切换文案");
 
   // 卸载：释放 locale 订阅与文档监听，后续通知不再更新组件
   const disposedBefore = h.locale.stats.disposed;
