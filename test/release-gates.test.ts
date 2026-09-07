@@ -82,6 +82,20 @@ test("发布包将公开 registry 与 next 固化为安全默认值", async () =
   }
 });
 
+test("收录清单前置：根清单声明 dsh.bundle 且与 dsh 模板一致", async () => {
+  const packageJson = JSON.parse(await readFile(new URL("../../package.json", import.meta.url), "utf8")) as {
+    dsh?: { bundle?: { patch?: unknown } };
+  };
+  assert.equal(packageJson.dsh?.bundle?.patch, "./cordis.patch.yml");
+
+  const template = JSON.parse(
+    await readFile(new URL("../../packages/dsh-moneypal/package.template.json", import.meta.url), "utf8"),
+  ) as { dsh?: { bundle?: { patch?: unknown } } };
+  assert.equal(template.dsh?.bundle?.patch, packageJson.dsh?.bundle?.patch);
+
+  await access(new URL("../../cordis.patch.yml", import.meta.url));
+});
+
 test("tarball 与验收脚本从根 package.json 推导版本", async () => {
   const tarballs = await readFile(`${workspace}/scripts/release-tarballs.mjs`, "utf8");
   const acceptance = await readFile(`${workspace}/scripts/release-acceptance.mjs`, "utf8");
