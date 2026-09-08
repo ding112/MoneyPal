@@ -50,8 +50,23 @@
 
 ## 验证流程
 
-日常开发先运行 `npm run test:fast`，并按改动补跑对应的已编译测试文件，例如 `npm run build && node --test dist/test/balance-host.test.js`。快速套件只覆盖稳定的单元与契约测试，不替代写入、MCP、bridge 或真实运行时测试。
+- 单次小改动：`npm run build:base` 后运行对应的 `dist/test/<文件>.test.js`，例如 `npm run build:base && node --test dist/test/balance-host.test.js`。`build:base` 会清空 `dist`，构建产物只对应最后一次源码，修改后不能省略重新编译。
+- 阶段性快速验证：`npm run test:fast`；合并前：`npm test`；涉及发布、包入口、Schema、注入、宿主注册、依赖或发布流程的改动：`npm run test:release`。
+- `build:base` 清空 `dist` 并生成基础产物；`npm run build` 额外装配两个发布包与专家 ZIP。任何 `:built` 命令要求对应构建刚完成。
+- 本地集成（`npm test`）允许明确跳过缺失真实运行时的 18 项；发布（`npm run test:release`）严格要求真实运行时可用兼容。
+- 发布 UI 验收只在发布前通过 ego-browser skill 执行；日常测试不包含 React/DOM 模拟器或浏览器测试。
+- `npm run test:fast`、`npm test`、`npm run test:release` 三个命令相互包含，不要用它们重复验证同一次修改：按所处阶段选择相应的最高层级即可；单独诊断失败文件时不受此限制。
 
-合并前运行 `npm test`（等同 `npm run test:integration`），它会构建并执行全部测试。修改插件入口、`inject`、工具 Schema、宿主注册、依赖或发布流程时，运行 `npm run test:release`；该命令只构建一次，随后执行全量测试、包检查与两个 tarball 的隔离安装 smoke test。
+### 发布 UI 验收清单（仅发布前执行）
+
+执行前先读取 ego-browser skill（`~/.agents/skills/ego-browser/SKILL.md`），再用真实运行时逐项验收；每项记录通过/失败，故障与空账本数据一律使用临时合成账本，不得使用个人正式账本：
+
+1. 桌面 1280px：普通会话不显示余额入口；账本会话显示入口。
+2. 桌面 1280px：抽屉打开、关闭与切换会话后入口/抽屉状态正确。
+3. 桌面 1280px：Tab/Shift+Tab 在抽屉内循环、Escape 关闭（非模态，背景对话仍可操作）。
+4. 移动 390px：模态抽屉、遮罩隔离背景、Tab 循环、Escape/关闭按钮关闭。
+5. 运行时故障时刷新失败：保留既有余额数据并提供重试，重试成功恢复。
+6. 空账本呈现空状态与刷新入口；多币种账本各币种分别列示。
+7. 卸载插件后入口消失、样式移除。
 
 正式发布仍须在干净 checkout 中另行运行 `npm run release:preflight`，再按发布验收记录完成 registry 与真实宿主验证。全部通过后检查最终差异：确认没有 pnpm 文件、构建生成物或公开契约漂移进入提交。

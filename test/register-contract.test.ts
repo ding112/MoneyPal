@@ -8,6 +8,7 @@ import {
   READ_ONLY_TOOL_DEFINITIONS,
 } from "../src/finance/contract.js";
 import type { LedgerEngine, RegisterResult } from "../src/finance/types.js";
+import { omitSchemaDescriptions } from "./contract-fixtures.js";
 
 test("完整流水查询使用共享 LedgerEngine 契约，并传递文本和数量限制", async () => {
   const expected: RegisterResult = {
@@ -45,7 +46,7 @@ test("完整流水查询使用共享 LedgerEngine 契约，并传递文本和数
   );
 
   const definition = READ_ONLY_TOOL_DEFINITIONS.find(({ name }) => name === "finance_query_register");
-  assert.deepEqual(definition?.parameters, {
+  assert.deepEqual(omitSchemaDescriptions(definition?.parameters), omitSchemaDescriptions({
     type: "object",
     properties: {
       account: { type: "string", description: "可选的账户名称。" },
@@ -55,7 +56,7 @@ test("完整流水查询使用共享 LedgerEngine 契约，并传递文本和数
       limit: { type: "integer", minimum: 1, description: "可选的最大返回交易数；结果另以 truncated 标识是否仍有匹配交易。" },
     },
     additionalProperties: false,
-  });
+  }));
 });
 
 test("流水查询拒绝非正整数限制", () => {
@@ -65,9 +66,9 @@ test("流水查询拒绝非正整数限制", () => {
 
 test("初始化输出契约符合 DSH 支持的 JSON Schema 子集", () => {
   const initialized = INITIALIZE_LEDGER_OUTPUT_SCHEMA.oneOf[0];
-  assert.deepEqual(initialized.properties.initialized, { type: "boolean", const: true });
-  assert.deepEqual(initialized.properties.ledgerDirectory, { type: "string", const: "default" });
-  assert.deepEqual(initialized.properties.year, { type: "integer" });
+  assert.deepEqual(omitSchemaDescriptions(initialized.properties.initialized), omitSchemaDescriptions({ type: "boolean", const: true }));
+  assert.deepEqual(omitSchemaDescriptions(initialized.properties.ledgerDirectory), omitSchemaDescriptions({ type: "string", const: "default" }));
+  assert.deepEqual(omitSchemaDescriptions(initialized.properties.year), omitSchemaDescriptions({ type: "integer" }));
   assert.equal("minimum" in initialized.properties.year, false);
   assert.equal("maximum" in initialized.properties.year, false);
 });

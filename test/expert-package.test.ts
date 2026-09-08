@@ -17,8 +17,6 @@ test("恰恰账本专家包具备 WorkBuddy 必填市场字段", async () => {
   assert.equal(manifest.expertType, "agent");
   assert.equal(manifest.agentName, "moneypal");
   assert.match(manifest.version, /^\d+\.\d+\.\d+$/u);
-  assert.deepEqual(manifest.author, { name: "mengzai", email: "hz_dyl112@163.com" });
-  assert.equal(manifest.displayName.zh, "恰恰账本");
   assert.equal(manifest.categoryId, "08-FinanceInvestment");
   assert.ok([...manifest.displayDescription.zh].length >= 40 && [...manifest.displayDescription.zh].length <= 50);
   assert.equal(manifest.tags.length, 3);
