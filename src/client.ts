@@ -1,4 +1,4 @@
-import type { BalanceSnapshot } from "./balance.js";
+import type { BalanceAccount, BalanceSnapshot } from "./balance.js";
 
 export type Capability = "unknown" | "candidate" | "ordinary";
 export interface BalanceRpc { capability(sessionId: string, signal: AbortSignal): Promise<boolean>; balances(sessionId: string, asOf: string, signal: AbortSignal): Promise<BalanceSnapshot>; }
@@ -58,9 +58,9 @@ export class BalanceController {
     } catch (error) {
       if (!this.#currentProbe(sessionId, request)) return;
       const cold = error instanceof BalanceClientError && error.code === "session_unavailable";
-      // 冷会话快速退避期间保持加载骨架；退避耗尽或非冷错误立即呈现可重试状态，不得无限显示“正在读取”。
+      // 冷会话快速退避期间保持加载骨架（已打开的抽屉不闪错误）；退避耗尽或非冷错误立即呈现可重试状态，不得无限显示“正在读取”。
       const backing = cold && this.#coldAttempt < COLD_RETRIES.length;
-      this.#state = { ...this.#state, capability: "unknown", loading: false, stale: Boolean(this.#state.snapshot), probeError: backing ? undefined : safeMessage(error) };
+      this.#state = { ...this.#state, capability: "unknown", loading: backing && this.#state.open, stale: Boolean(this.#state.snapshot), probeError: backing ? undefined : safeMessage(error) };
       this.emit();
       this.#scheduleProbe(backing ? COLD_RETRIES[this.#coldAttempt++] : POLL_MS);
     }
@@ -84,18 +84,37 @@ export class BalanceController {
   }
 
   async toggle(open = !this.#state.open): Promise<void> {
-    if (this.#state.capability !== "candidate") return;
+    if (this.#disposed) return;
+    if (!open) {
+      // 关闭分支先行：未知能力也允许关闭；写入关闭偏好并停止余额请求与轮询，后台能力探测保留。
+      this.#state = { ...this.#state, open: false, loading: false }; this.emit();
+      this.#writeOpen(false);
+      this.#abortBalance(); this.#cancelRefresh();
+      return;
+    }
+    if (this.#state.open) return;
+    // 打开仅限候选会话，或探测失败后的恢复路径；冷退避与首次探测期间、普通会话不响应。
+    const recoverable = this.#state.capability === "candidate" || (this.#state.capability === "unknown" && Boolean(this.#state.probeError));
+    if (!recoverable) return;
+    if (this.#state.capability === "unknown") {
+      // 失败态恢复：只展示既有错误/过期快照并保存打开偏好；不清错误、不进加载态，余额读取等探测确认能力后进行。
+      this.#state = { ...this.#state, open: true, stale: Boolean(this.#state.snapshot) }; this.emit();
+      this.#writeOpen(true);
+      return;
+    }
     // 重开抽屉时旧快照明确标记待更新：关闭期间账本可能已变化，刷新成功前不得当作新鲜数据。
-    this.#state = { ...this.#state, open, stale: open && Boolean(this.#state.snapshot), loading: open && !this.#state.snapshot }; this.emit();
-    this.#writeOpen(open);
-    if (open) await this.refresh(); else { this.#abortBalance(); this.#cancelRefresh(); }
+    this.#state = { ...this.#state, open: true, stale: Boolean(this.#state.snapshot), loading: !this.#state.snapshot }; this.emit();
+    this.#writeOpen(true);
+    await this.refresh();
   }
 
-  /** 能力探测失败后的手动重试：清退避计数与可重试状态，重新探测；探测成功且抽屉打开时自动补拉余额。 */
+  /** 探测失败后的手动重试：取消既有探测节奏并清退避计数与可重试状态，重新探测；
+   * 已打开的抽屉进入加载态并保留旧快照与过期标记；探测确认能力后由 probe 路径自动补拉余额。 */
   async retry(): Promise<void> {
     if (this.#disposed || !this.#state.sessionId) return;
+    this.#cancelProbeTimer();
     this.#coldAttempt = 0;
-    this.#state = { ...this.#state, probeError: undefined, error: undefined }; this.emit();
+    this.#state = { ...this.#state, probeError: undefined, error: undefined, loading: this.#state.open }; this.emit();
     await this.probe();
   }
 
@@ -139,4 +158,47 @@ export function formatAmountParts(amount: { commodity: string; quantity: string 
 export function formatAmount(amount: { commodity: string; quantity: string }, negate = false): string {
   const parts = formatAmountParts(amount, negate);
   return `${parts.value} ${parts.currency}`;
+}
+
+export interface PreviewEntry { account: BalanceAccount; liability: boolean; }
+
+export type FooterDot = "neutral" | "warning" | "success";
+export interface FooterStatus { key: string; dot: FooterDot; }
+
+/** 页脚唯一状态模型：自上而下首项命中，同时给出文案键与圆点类型；圆点仅是视觉辅助（aria-hidden），含义由文字表达。 */
+export function footerStatus(state: Pick<BalanceControllerState, "error" | "probeError" | "loading" | "stale" | "snapshot">): FooterStatus {
+  if (state.error || state.probeError) return { key: "status.refreshFailed", dot: "warning" };
+  if (state.loading) return { key: state.snapshot ? "status.refreshing" : "status.waitingLedger", dot: "neutral" };
+  if (state.stale) return { key: "status.stale", dot: "warning" };
+  if (state.snapshot && !state.snapshot.assets.accounts.length && !state.snapshot.liabilities.accounts.length) return { key: "status.noData", dot: "neutral" };
+  if (state.snapshot) return { key: "status.autoRefresh", dot: "success" };
+  return { key: "status.waitingLedger", dot: "neutral" };
+}
+
+/** 概览预览选择：资产在前、负债在后并保留各组原顺序；全部账户恰好一个商品且每账户恰好一条金额时按绝对金额降序，其余不排序；最多三条。 */
+export function selectPreviewAccounts(snapshot: BalanceSnapshot): PreviewEntry[] {
+  const entries: PreviewEntry[] = [
+    ...snapshot.assets.accounts.map((account) => ({ account, liability: false })),
+    ...snapshot.liabilities.accounts.map((account) => ({ account, liability: true })),
+  ];
+  const commodities = new Set<string>();
+  for (const entry of entries) for (const amount of entry.account.amounts) commodities.add(amount.commodity);
+  const sortable = commodities.size === 1 && entries.every((entry) => entry.account.amounts.length === 1);
+  // 稳定排序：绝对金额相等时保留原顺序；包装数组排序不触碰快照本身。
+  const ordered = sortable ? [...entries].sort((left, right) => -compareAbsoluteDecimal(left.account.amounts[0]!.quantity, right.account.amounts[0]!.quantity)) : entries;
+  return ordered.slice(0, 3);
+}
+
+/** 十进制字符串绝对值比较：整数去前导零后先比位数再比字典序，小数右补零到等长后比较；不经浮点数。 */
+function compareAbsoluteDecimal(left: string, right: string): -1 | 0 | 1 {
+  const magnitude = (value: string) => {
+    const [integer, fraction = ""] = value.replace(/^-/u, "").split(".");
+    return { digits: integer.replace(/^0+/u, "") || "0", fraction };
+  };
+  const a = magnitude(left); const b = magnitude(right);
+  if (a.digits.length !== b.digits.length) return a.digits.length < b.digits.length ? -1 : 1;
+  if (a.digits !== b.digits) return a.digits < b.digits ? -1 : 1;
+  const width = Math.max(a.fraction.length, b.fraction.length);
+  const aFraction = a.fraction.padEnd(width, "0"); const bFraction = b.fraction.padEnd(width, "0");
+  return aFraction === bFraction ? 0 : aFraction < bFraction ? -1 : 1;
 }

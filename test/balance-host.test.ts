@@ -5,9 +5,9 @@ import { join } from "node:path";
 import { after, before, test } from "node:test";
 import { runInNewContext } from "node:vm";
 import { apply } from "../src/host.js";
-import { dayAfter, readBalanceSnapshot, snapshotFromBalance } from "../src/balance.js";
+import { dayAfter, readBalanceSnapshot, snapshotFromBalance, type BalanceSnapshot } from "../src/balance.js";
 import { FinanceError } from "../src/finance/errors.js";
-import { BalanceClientError, BalanceController, formatAmount, formatAmountParts } from "../src/client.js";
+import { BalanceClientError, BalanceController, footerStatus, formatAmount, formatAmountParts, selectPreviewAccounts } from "../src/client.js";
 
 let root: string; let runtime: string; let originalPython: string | undefined;
 before(async () => { root = await mkdtemp(join(tmpdir(), "dsh-moneypal-balance-")); runtime = join(root, "runtime.sh"); await writeFile(runtime, `#!/bin/sh
@@ -226,8 +226,9 @@ test("客户端控制器切换会话时取消旧请求，并只持久化开关",
     balances: async (id, _date, signal) => { if (id === "old") { await new Promise((resolve) => signal.addEventListener("abort", () => { oldAborted = true; resolve(undefined); })); throw new Error("cancelled"); } return { asOf: "2026-08-27", assets: { accounts: [], totals: [] }, liabilities: { accounts: [], totals: [] } }; },
   } });
   await controller.setSession("old"); const pending = controller.toggle(true); await controller.setSession("new"); await pending;
-  await controller.toggle(true); controller.dispose();
-  assert.equal(oldAborted, true); assert.equal(controller.state.sessionId, "new"); assert.deepEqual(saved, ["dsh-moneypal.balance-open:true", "dsh-moneypal.balance-open:true"]);
+  await controller.toggle(false); await controller.toggle(true); controller.dispose();
+  assert.equal(oldAborted, true); assert.equal(controller.state.sessionId, "new");
+  assert.deepEqual(saved, ["dsh-moneypal.balance-open:true", "dsh-moneypal.balance-open:false", "dsh-moneypal.balance-open:true"]);
 });
 
 test("冷会话按退避重试，候选账本打开后轮询余额并保留过期快照", async () => {
@@ -344,4 +345,183 @@ test("localStorage 异常时开关持久化降级，不影响余额流程", asyn
   await controller.toggle(false);
   assert.equal(controller.state.open, false);
   controller.dispose();
+});
+
+test("未知会话可关闭抽屉并保留后台探测；失败恢复打开不请求余额，重复打开直接返回", async () => {
+  const timers: Array<{ callback: () => void; ms: number }> = []; const saved: string[] = [];
+  let mode: "cold" | "fail" | "ok" = "cold"; let balances = 0;
+  const snapshot = { asOf: "2026-08-27", assets: { accounts: [], totals: [] }, liabilities: { accounts: [], totals: [] } };
+  const controller = new BalanceController({ visible: () => true, storage: { getItem: () => null, setItem: (key, value) => saved.push(`${key}:${value}`) }, schedule: (callback, ms) => { timers.push({ callback, ms }); return timers.length as unknown as ReturnType<typeof setTimeout>; }, cancel: () => undefined, rpc: {
+    capability: async () => { if (mode === "cold") throw new BalanceClientError("session_unavailable", "稍后重试"); if (mode === "fail") throw new BalanceClientError("balance_unavailable", "断开"); return true; },
+    balances: async () => { balances += 1; return snapshot; },
+  } });
+  await controller.setSession("s");
+  assert.equal(controller.state.capability, "unknown");
+  assert.equal(controller.state.probeError, undefined, "冷退避期间不呈现错误");
+  await controller.toggle(true);
+  assert.equal(controller.state.open, false, "冷退避期间打开是 no-op");
+  assert.equal(balances, 0);
+
+  // 非冷失败后的恢复打开：只展示既有错误并保存打开偏好，不请求余额、不清错误、不进加载态
+  mode = "fail"; await controller.retry();
+  assert.equal(controller.state.probeError, "断开");
+  await controller.toggle(true);
+  assert.equal(controller.state.open, true);
+  assert.equal(controller.state.loading, false, "失败态打开不得进入加载态");
+  assert.equal(controller.state.probeError, "断开", "失败态打开不得清除错误");
+  assert.equal(balances, 0, "失败态打开不得请求余额");
+
+  // 已打开时重复打开直接返回，不重复写偏好
+  const writesBefore = saved.length;
+  await controller.toggle(true);
+  assert.equal(saved.length, writesBefore, "重复打开不得重复写偏好");
+  assert.equal(controller.state.open, true);
+
+  // 未知能力下允许关闭：写关闭偏好、清加载，后台能力探测保留
+  await controller.toggle(false);
+  assert.equal(controller.state.open, false);
+  assert.equal(controller.state.loading, false);
+  assert.equal(timers.at(-1)?.ms, 30_000, "关闭后应保留后台能力探测");
+  assert.deepEqual(saved, ["dsh-moneypal.balance-open:true", "dsh-moneypal.balance-open:false"]);
+
+  // 后台探测确认候选后重新打开：正常读取余额
+  mode = "ok";
+  timers.at(-1)?.callback();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(controller.state.capability, "candidate");
+  await controller.toggle(true);
+  assert.equal(balances, 1);
+  assert.ok(controller.state.snapshot);
+  controller.dispose();
+});
+
+test("重试确认为候选时自动补拉余额，确认为普通时关闭抽屉并清空快照", async () => {
+  let mode: "fail" | "ok" | "ordinary" = "fail"; let balances = 0;
+  const snapshot = { asOf: "2026-08-27", assets: { accounts: [{ account: "Assets:C-现金", amounts: [{ commodity: "CNY", quantity: "1.00" }] }], totals: [{ commodity: "CNY", quantity: "1.00" }] }, liabilities: { accounts: [], totals: [] } };
+  const controller = new BalanceController({ visible: () => true, rpc: {
+    capability: async () => { if (mode === "fail") throw new BalanceClientError("balance_unavailable", "断开"); return mode !== "ordinary"; },
+    balances: async () => { balances += 1; return snapshot; },
+  } });
+  await controller.setSession("s");
+  await controller.toggle(true);
+  assert.equal(controller.state.probeError, "断开");
+  mode = "ok"; await controller.retry();
+  assert.equal(controller.state.capability, "candidate");
+  assert.equal(controller.state.probeError, undefined, "重试成功应清除错误");
+  assert.equal(balances, 1, "重试确认为候选后应由探测路径自动补拉余额");
+  assert.ok(controller.state.snapshot);
+  mode = "ordinary"; await controller.retry();
+  assert.equal(controller.state.capability, "ordinary");
+  assert.equal(controller.state.open, false, "重试确认为普通后应关闭抽屉");
+  assert.equal(controller.state.snapshot, undefined, "重试确认为普通后应清空快照");
+  assert.equal(controller.state.probeError, undefined);
+  controller.dispose();
+});
+
+test("重试期间冷退避保持加载、耗尽后呈现错误", async () => {
+  const timers: Array<{ callback: () => void; ms: number }> = [];
+  let mode: "cold" | "fail" | "ok" = "ok";
+  const snapshot = { asOf: "2026-08-27", assets: { accounts: [{ account: "Assets:C-现金", amounts: [{ commodity: "CNY", quantity: "1.00" }] }], totals: [] }, liabilities: { accounts: [], totals: [] } };
+  const controller = new BalanceController({ visible: () => true, schedule: (callback, ms) => { timers.push({ callback, ms }); return timers.length as unknown as ReturnType<typeof setTimeout>; }, cancel: () => undefined, rpc: {
+    capability: async () => { if (mode === "fail") throw new BalanceClientError("balance_unavailable", "断开"); if (mode === "cold") throw new BalanceClientError("session_unavailable", "稍后重试"); return true; },
+    balances: async () => snapshot,
+  } });
+  await controller.setSession("s"); await controller.toggle(true);
+  assert.equal(controller.state.capability, "candidate");
+  assert.ok(controller.state.snapshot);
+
+  // 先进入可重试状态（非冷失败），再手动重试
+  mode = "fail"; await controller.probe();
+  assert.equal(controller.state.probeError, "断开");
+  mode = "cold";
+  await controller.retry();
+  assert.equal(controller.state.loading, true, "重试应让已打开的抽屉进入加载态");
+  assert.equal(controller.state.snapshot?.asOf, "2026-08-27", "重试期间应保留旧快照");
+  assert.equal(controller.state.stale, true, "重试应保留旧快照的过期标记");
+
+  // 重试后的探测继续冷退避：已打开的抽屉保持加载，退避节奏为 250/500/1000
+  assert.equal(timers.at(-1)?.ms, 250);
+  timers.at(-1)?.callback(); await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(controller.state.loading, true, "冷退避期间已打开的抽屉应保持加载");
+  assert.equal(controller.state.probeError, undefined, "退避期间不得呈现错误");
+  timers.at(-1)?.callback(); await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(controller.state.loading, true, "退避未耗尽时应保持加载");
+  timers.at(-1)?.callback(); await new Promise((resolve) => setImmediate(resolve));
+  assert.ok(controller.state.probeError, "退避耗尽后应呈现错误");
+  assert.equal(controller.state.loading, false, "退避耗尽后应结束加载");
+  assert.equal(controller.state.snapshot?.asOf, "2026-08-27", "错误期间仍保留旧快照");
+  controller.dispose();
+});
+
+test("切换会话后迟到的余额结果不得污染新会话", async () => {
+  let release!: (value: BalanceSnapshot | PromiseLike<BalanceSnapshot>) => void;
+  const oldSnapshot = { asOf: "2026-08-27", assets: { accounts: [{ account: "Assets:C-旧会话", amounts: [{ commodity: "CNY", quantity: "1.00" }] }], totals: [] }, liabilities: { accounts: [], totals: [] } };
+  const newSnapshot = { asOf: "2026-08-28", assets: { accounts: [{ account: "Assets:C-新会话", amounts: [{ commodity: "CNY", quantity: "2.00" }] }], totals: [] }, liabilities: { accounts: [], totals: [] } };
+  const controller = new BalanceController({ visible: () => true, rpc: {
+    capability: async () => true,
+    balances: async (id) => id === "old" ? new Promise((resolve) => { release = resolve; }) : newSnapshot,
+  } });
+  await controller.setSession("old");
+  const pending = controller.toggle(true);
+  await controller.setSession("new");
+  release(oldSnapshot);
+  await pending;
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(controller.state.sessionId, "new");
+  assert.equal(controller.state.snapshot?.asOf, "2026-08-28", "应展示新会话快照");
+  assert.equal(JSON.stringify(controller.state.snapshot).includes("旧会话"), false, "迟到的旧会话结果不得进入状态");
+  controller.dispose();
+});
+
+test("页脚状态模型按优先级逐行给出文案键与圆点类型", () => {
+  const snapshot = { asOf: "2026-08-27", assets: { accounts: [{ account: "Assets:C-现金", amounts: [{ commodity: "CNY", quantity: "1.00" }] }], totals: [] }, liabilities: { accounts: [], totals: [] } };
+  const emptySnapshot = { asOf: "2026-08-27", assets: { accounts: [], totals: [] }, liabilities: { accounts: [], totals: [] } };
+  const base = { error: undefined, probeError: undefined, loading: false, stale: false, snapshot: undefined };
+  // 表格逐行：错误 → 加载（有/无快照）→ 过期 → 空数据 → 新鲜 → 兜底
+  assert.deepEqual(footerStatus({ ...base, error: "读取余额失败", snapshot }), { key: "status.refreshFailed", dot: "warning" });
+  assert.deepEqual(footerStatus({ ...base, probeError: "断开", snapshot }), { key: "status.refreshFailed", dot: "warning" });
+  assert.deepEqual(footerStatus({ ...base, loading: true, snapshot }), { key: "status.refreshing", dot: "neutral" });
+  assert.deepEqual(footerStatus({ ...base, loading: true }), { key: "status.waitingLedger", dot: "neutral" });
+  assert.deepEqual(footerStatus({ ...base, stale: true, snapshot }), { key: "status.stale", dot: "warning" });
+  assert.deepEqual(footerStatus({ ...base, snapshot: emptySnapshot }), { key: "status.noData", dot: "neutral" });
+  assert.deepEqual(footerStatus({ ...base, snapshot }), { key: "status.autoRefresh", dot: "success" });
+  assert.deepEqual(footerStatus(base), { key: "status.waitingLedger", dot: "neutral" });
+});
+
+test("概览预览选择：单商品按绝对金额降序取前三，其余保持原顺序且不改快照", () => {
+  const asSnapshot = (value: unknown) => value as Parameters<typeof selectPreviewAccounts>[0];
+  const build = (assets: Array<[string, string[]]>, liabilities: Array<[string, string[]]> = []) => ({
+    asOf: "2026-08-27",
+    assets: { accounts: assets.map(([account, quantities]) => ({ account, amounts: quantities.map((quantity) => ({ commodity: "CNY", quantity })) })), totals: [] },
+    liabilities: { accounts: liabilities.map(([account, quantities]) => ({ account, amounts: quantities.map((quantity) => ({ commodity: "CNY", quantity })) })), totals: [] },
+  });
+
+  // 同币种正负金额、大数、不同小数位：按绝对金额降序取前三
+  const mixed = asSnapshot(build([["Assets:A", ["100.00"]], ["Assets:B", ["-1200.00"]], ["Assets:C", ["300.00"]], ["Assets:D", ["123456789012345678901234567890.00"]]]));
+  const frozen = JSON.stringify(mixed);
+  const preview = selectPreviewAccounts(mixed);
+  assert.deepEqual(preview.map((entry) => entry.account.account), ["Assets:D", "Assets:B", "Assets:C"], "应按绝对金额降序取前三");
+  assert.deepEqual(preview.map((entry) => entry.liability), [false, false, false]);
+  assert.equal(JSON.stringify(mixed), frozen, "预览选择不得修改快照");
+
+  // 负债参与降序；绝对值相等（含小数位差异）时保留原顺序
+  const ties = asSnapshot(build([["Assets:A", ["0.30"]], ["Assets:B", ["0.3"]]], [["Liabilities:E", ["-50.00"]], ["Liabilities:F", ["50.000"]]]));
+  const tiesPreview = selectPreviewAccounts(ties);
+  assert.deepEqual(tiesPreview.map((entry) => entry.account.account), ["Liabilities:E", "Liabilities:F", "Assets:A"], "相等金额保留原顺序，负债按绝对值参与排序");
+  assert.deepEqual(tiesPreview.map((entry) => entry.liability), [true, true, false]);
+
+  // 多商品出现在第四个账户：不排序
+  const multiFourth = build([["Assets:A", ["1.00"]], ["Assets:B", ["5.00"]], ["Assets:C", ["3.00"]], ["Assets:D", ["2.00"]]]);
+  (multiFourth.assets.accounts[3]!.amounts as Array<{ commodity: string; quantity: string }>).push({ commodity: "USD", quantity: "1.00" });
+  assert.deepEqual(selectPreviewAccounts(asSnapshot(multiFourth)).map((entry) => entry.account.account), ["Assets:A", "Assets:B", "Assets:C"], "第四个账户出现第二商品即不排序");
+
+  // 单商品但某账户有第二条金额：不排序
+  const multiSecond = build([["Assets:A", ["5.00"]], ["Assets:B", ["1.00"]]]);
+  (multiSecond.assets.accounts[0]!.amounts as Array<{ commodity: string; quantity: string }>).push({ commodity: "CNY", quantity: "2.00" });
+  assert.deepEqual(selectPreviewAccounts(asSnapshot(multiSecond)).map((entry) => entry.account.account), ["Assets:A", "Assets:B"], "任一账户出现第二条金额即不排序");
+
+  // 无商品与空账户金额：不排序，返回原顺序前若干条
+  assert.deepEqual(selectPreviewAccounts(asSnapshot(build([]))), []);
+  const emptyAmounts = build([["Assets:A", []], ["Assets:B", ["5.00"]]]);
+  assert.deepEqual(selectPreviewAccounts(asSnapshot(emptyAmounts)).map((entry) => entry.account.account), ["Assets:A", "Assets:B"], "金额结构不满足时保持原顺序");
 });

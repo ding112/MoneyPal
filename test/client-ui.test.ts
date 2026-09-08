@@ -278,7 +278,7 @@ interface Harness {
   header: SlotComponent;
   drawer: SlotComponent;
   locale: ReturnType<typeof createLocale>;
-  rpc: { capabilityOk: boolean; balances: unknown; balancesError?: { code: string; message: string }; calls: string[] };
+  rpc: { capabilityOk: boolean; capabilityError?: { code: string; message: string }; balancesHang?: boolean; candidateOverride?: boolean; balances: unknown; balancesError?: { code: string; message: string }; calls: string[] };
   setCompact(matches: boolean): void;
 }
 
@@ -297,15 +297,18 @@ async function harness(options: { storedOpen?: string; balances?: unknown } = {}
   const captured = new Map<string, SlotComponent>();
   const effects: Array<{ name: string; dispose: () => void }> = [];
   const locale = createLocale();
-  // RPC 可变桩：capabilityOk 控制探测成败，balances/balancesError 控制余额请求结果，calls 记录调用序列。
+  // RPC 可变桩：capabilityOk 控制探测成败，capabilityError 指定失败错误码（session_unavailable 模拟冷会话），
+  // candidateOverride 覆盖候选判定，balancesHang 让余额请求挂起，balances/balancesError 控制余额请求结果，calls 记录调用序列。
   const rpc: Harness["rpc"] = { capabilityOk: true, balances: options.balances, calls: [] };
   registration!.factory((name) => name === "react" ? { ...reactEnv.react, ...reactEnv.hooks } : undefined).apply({
     connection: { rpc: { call: async (_channel: string, endpoint: string, payload: { sessionId: string }) => {
       rpc.calls.push(endpoint);
       if (endpoint === "capability") {
-        if (!rpc.capabilityOk || payload.sessionId !== "ledger") return { ok: true, value: { ok: false, error: { code: "probe_unavailable", message: "暂时无法连接账本" } } };
-        return { ok: true, value: { ok: true, value: { candidate: true } } };
+        if (rpc.capabilityError) return { ok: true, value: { ok: false, error: rpc.capabilityError } };
+        if (!rpc.capabilityOk) return { ok: true, value: { ok: false, error: { code: "probe_unavailable", message: "暂时无法连接账本" } } };
+        return { ok: true, value: { ok: true, value: { candidate: rpc.candidateOverride ?? payload.sessionId === "ledger" } } };
       }
+      if (rpc.balancesHang) return new Promise(() => undefined);
       if (rpc.balancesError) return { ok: true, value: { ok: false, error: rpc.balancesError } };
       const value = typeof rpc.balances === "function" ? (rpc.balances as () => unknown)() : rpc.balances ?? fixtureSnapshot();
       return { ok: true, value: { ok: true, value } };
@@ -364,6 +367,14 @@ test("bundle 注入 locale 服务并注册命名空间文案，入口携带展�
   assert.equal(entry.props["aria-label"], "查看账户余额");
   assert.equal(entry.props["aria-expanded"], false, "入口初始应为收起状态");
   assert.equal(entry.props["aria-controls"], "dsh-moneypal-balance-drawer");
+  // 入口幽灵按钮：不在抽屉 DOM 内，局部颜色变量必须自声明；加入 focus-visible 清单
+  const css = h.head.find((style) => style.id === "dsh-moneypal-balance-style")!.textContent;
+  const entryRule = css.split(".dsh-moneypal-balance-entry {")[1]?.split("}")[0] ?? "";
+  assert.ok(entryRule.includes("--dsh-moneypal-balance-muted:"), "入口必须自声明局部颜色变量");
+  assert.ok(entryRule.includes("min-height: 28px") && entryRule.includes("padding: 5px 10px"), "入口缺少固定尺寸");
+  assert.ok(entryRule.includes("background: transparent") && entryRule.includes("border: 0"), "入口应为透明背景幽灵按钮");
+  assert.ok(css.includes(".dsh-moneypal-balance-entry:focus-visible"), "入口未加入 focus-visible 清单");
+  assert.ok(!css.includes("--dsh-moneypal-balance-faint") && !css.includes("--dsh-moneypal-balance-caption:"), "已废弃的弱化变量不得残留");
   await openDrawer(h);
   const opened = renderSlot(h, h.header, { sessionId: "ledger" }) as Element;
   assert.equal(opened.props["aria-expanded"], true, "抽屉打开后入口应为展开状态");
@@ -567,6 +578,245 @@ test("空账本且探测失败时空状态刷新按钮走重试路径", async ()
   assert.ok(!textOf(recovered).includes("暂无账户余额"), "恢复后不应仍是空状态");
 });
 
+test("入口规则：首次探测与冷退避期间隐藏，非冷失败或抽屉已打开时显示，普通会话隐藏", async () => {
+  const h = await harness();
+  // 首次探测未完成：unknown 且无错误、未打开 → 隐藏
+  assert.equal(renderSlot(h, h.header, { sessionId: "ledger" }), null, "首次探测期间不得显示入口");
+  h.react.runEffects(); await tick();
+  assert.equal((renderSlot(h, h.header, { sessionId: "ledger" }) as Element).type, "button", "候选会话应显示入口");
+  // 渲染一次抽屉槽位以安装 visibilitychange 监听（DrawerSlot effect 负责）
+  renderSlot(h, h.drawer, { useSessions: useSessionsFor("ledger") });
+  h.react.runEffects();
+
+  // 冷退避期间（session_unavailable 未耗尽）：隐藏
+  h.rpc.capabilityError = { code: "session_unavailable", message: "稍后重试" };
+  fireVisibility(h);
+  await tick(); h.react.runEffects();
+  assert.equal(renderSlot(h, h.header, { sessionId: "ledger" }), null, "冷退避期间不得显示入口");
+
+  // 非冷失败：显示恢复入口
+  h.rpc.capabilityError = { code: "balance_unavailable", message: "断开" };
+  fireVisibility(h);
+  await tick(); h.react.runEffects();
+  const failed = renderSlot(h, h.header, { sessionId: "ledger" }) as Element;
+  assert.equal(failed.type, "button", "非冷失败后应显示恢复入口");
+  assert.equal(failed.props["aria-expanded"], false, "失败态入口初始应为收起");
+
+  // 失败态打开后重试清除错误：已打开的抽屉保持入口可见
+  clickEntry(failed);
+  await tick(); h.react.runEffects();
+  h.rpc.capabilityError = { code: "session_unavailable", message: "稍后重试" };
+  fireVisibility(h);
+  await tick(); h.react.runEffects();
+  assert.equal((renderSlot(h, h.header, { sessionId: "ledger" }) as Element).type, "button", "重试清错后已打开的抽屉应保持入口可见");
+
+  // 普通会话：隐藏
+  h.rpc.capabilityError = undefined;
+  renderSlot(h, h.header, { sessionId: "other" });
+  h.react.runEffects(); await tick();
+  assert.equal(renderSlot(h, h.header, { sessionId: "other" }), null, "普通会话不得显示入口");
+});
+
+test("失败恢复入口：打开呈现错误态且不请求余额，重复打开无副作用，Escape 与关闭按钮均归还焦点", async () => {
+  const h = await harness();
+  h.rpc.capabilityOk = false;
+  renderSlot(h, h.header, { sessionId: "ledger" });
+  h.react.runEffects(); await tick();
+  const entry = renderSlot(h, h.header, { sessionId: "ledger" }) as Element;
+  assert.equal(entry.type, "button", "探测失败后应显示恢复入口");
+  const focusNode = { isConnected: true, focusCalls: 0, focus() { focusNode.focusCalls += 1; } };
+  clickEntry(entry, focusNode);
+  await tick(); h.react.runEffects();
+  const tree = renderSlot(h, h.drawer, { useSessions: useSessionsFor("ledger") });
+  const aside = findOne(tree, (element) => element.type === "aside", "失败态抽屉未渲染");
+  assert.ok(textOf(tree).includes("暂时无法读取余额"), "恢复打开应呈现错误态");
+  assert.equal(h.rpc.calls.filter((endpoint) => endpoint === "balances").length, 0, "失败态打开不得请求余额");
+  assert.equal((renderSlot(h, h.header, { sessionId: "ledger" }) as Element).props["aria-expanded"], true, "抽屉打开后入口应为展开状态");
+
+  // 重复打开：无副作用
+  clickEntry(renderSlot(h, h.header, { sessionId: "ledger" }) as Element, focusNode);
+  await tick(); h.react.runEffects();
+  assert.equal((renderSlot(h, h.header, { sessionId: "ledger" }) as Element).props["aria-expanded"], true);
+
+  // Escape 关闭并归还焦点
+  (aside.props.onKeyDown as (event: KeyEvent) => void)({ key: "Escape", defaultPrevented: false, preventDefault: () => undefined });
+  await tick(); h.react.runEffects();
+  assert.equal(findAll(renderSlot(h, h.drawer, { useSessions: useSessionsFor("ledger") }), (element) => element.type === "aside").length, 0, "Escape 应关闭失败态抽屉");
+  assert.equal(focusNode.focusCalls, 1, "关闭后焦点应归还恢复入口");
+  assert.equal((renderSlot(h, h.header, { sessionId: "ledger" }) as Element).props["aria-expanded"], false);
+
+  // 工具栏关闭按钮同样可关闭失败态抽屉
+  clickEntry(renderSlot(h, h.header, { sessionId: "ledger" }) as Element, focusNode);
+  await tick(); h.react.runEffects();
+  const reopened = renderSlot(h, h.drawer, { useSessions: useSessionsFor("ledger") });
+  const closeButton = findOne(reopened, (element) => hasClass(element, "icon") && element.props["aria-label"] === "关闭账户余额", "关闭按钮缺失");
+  (closeButton.props.onClick as () => void)();
+  await tick(); h.react.runEffects();
+  assert.equal(findAll(renderSlot(h, h.drawer, { useSessions: useSessionsFor("ledger") }), (element) => element.type === "aside").length, 0, "关闭按钮应能关闭失败态抽屉");
+  assert.equal(focusNode.focusCalls, 2, "按钮关闭也应归还焦点");
+});
+
+test("失败态重试：期间入口保持可见、先调用 capability；候选余额失败重试只调用 balances", async () => {
+  const h = await harness();
+  h.rpc.capabilityOk = false;
+  renderSlot(h, h.header, { sessionId: "ledger" });
+  h.react.runEffects(); await tick();
+  clickEntry(renderSlot(h, h.header, { sessionId: "ledger" }) as Element);
+  await tick(); h.react.runEffects();
+  const tree = renderSlot(h, h.drawer, { useSessions: useSessionsFor("ledger") });
+  const action = findOne(tree, (element) => hasClass(element, "state-action"), "错误态缺少刷新按钮");
+  assert.equal(textOf(action), "刷新余额", "错误态动作应统一为刷新余额");
+
+  // unknown 下的刷新走重新探测：先调用 capability，期间入口保持可见
+  h.rpc.capabilityOk = true;
+  h.rpc.balances = variantSnapshot("重试恢复");
+  h.rpc.calls.length = 0;
+  (action.props.onClick as () => void)();
+  assert.equal((renderSlot(h, h.header, { sessionId: "ledger" }) as Element).type, "button", "重试期间入口不得消失");
+  await tick(); h.react.runEffects();
+  assert.equal(h.rpc.calls[0], "capability", "unknown 下的重试应先调用 capability");
+  const recovered = renderSlot(h, h.drawer, { useSessions: useSessionsFor("ledger") });
+  h.react.runEffects();
+  assert.ok(textOf(recovered).includes("C-现金·重试恢复"), "重试成功后应自动显示余额");
+
+  // 候选能力的余额失败：刷新只重试余额请求，不触发探测
+  h.rpc.balances = undefined;
+  h.rpc.balancesError = { code: "balances_unavailable", message: "读取余额失败" };
+  fireVisibility(h);
+  await tick(); h.react.runEffects();
+  const failed = renderSlot(h, h.drawer, { useSessions: useSessionsFor("ledger") });
+  h.react.runEffects();
+  const banner = findOne(failed, (element) => hasClass(element, "banner"), "余额失败后应显示横幅");
+  h.rpc.calls.length = 0;
+  h.rpc.balancesError = undefined;
+  h.rpc.balances = variantSnapshot("余额恢复");
+  (findOne(banner, (element) => hasClass(element, "banner-retry"), "横幅缺少重试按钮").props.onClick as () => void)();
+  await tick(); h.react.runEffects();
+  assert.deepEqual(h.rpc.calls, ["balances"], "候选能力下的重试只应请求 balances");
+  assert.ok(textOf(renderSlot(h, h.drawer, { useSessions: useSessionsFor("ledger") })).includes("C-现金·余额恢复"), "余额重试应读取新快照");
+});
+
+test("关闭期间探测失败仍能恢复打开：保留旧快照并显示过期提示", async () => {
+  const h = await harness();
+  await openDrawer(h);
+  h.react.runEffects(); await tick();
+  const openTree = renderSlot(h, h.drawer, { useSessions: useSessionsFor("ledger") });
+  const closeButton = findOne(openTree, (element) => hasClass(element, "icon") && element.props["aria-label"] === "关闭账户余额", "关闭按钮缺失");
+  (closeButton.props.onClick as () => void)();
+  await tick(); h.react.runEffects();
+
+  h.rpc.capabilityOk = false;
+  h.rpc.balancesError = { code: "balances_unavailable", message: "读取余额失败" };
+  fireVisibility(h);
+  await tick(); h.react.runEffects();
+  const entry = renderSlot(h, h.header, { sessionId: "ledger" }) as Element;
+  assert.equal(entry.type, "button", "关闭期间探测失败应显示恢复入口");
+  clickEntry(entry);
+  await tick(); h.react.runEffects();
+  const tree = renderSlot(h, h.drawer, { useSessions: useSessionsFor("ledger") });
+  h.react.runEffects();
+  assert.ok(textOf(tree).includes("C-现金"), "恢复打开应保留旧快照");
+  const banner = findOne(tree, (element) => hasClass(element, "banner"), "旧快照恢复应显示横幅");
+  assert.ok(textOf(banner).includes("刷新失败"), "旧快照恢复应显示失败/过期提示");
+});
+
+test("页脚状态模型逐行表达数据状态与圆点类型", async () => {
+  const footerOf = (tree: unknown) => findOne(tree, (element) => classNameOf(element).includes("footer"), "状态栏缺失");
+  const dotOf = (footer: Element) => findOne(footer, (element) => classNameOf(element).includes("dot"), "状态圆点缺失");
+
+  // 旧快照失败：错误优先于一切 → 刷新失败 + 警示点（不得再显示自动刷新成功态）
+  const failed = await harness();
+  await openDrawer(failed);
+  failed.react.runEffects(); await tick();
+  failed.rpc.capabilityOk = false;
+  failed.rpc.balancesError = { code: "balances_unavailable", message: "读取余额失败" };
+  fireVisibility(failed);
+  await tick(); failed.react.runEffects();
+  const failedFooter = footerOf(renderSlot(failed, failed.drawer, { useSessions: useSessionsFor("ledger") }));
+  assert.ok(textOf(failedFooter).includes("刷新失败"), "旧快照失败应显示刷新失败");
+  assert.ok(hasClass(dotOf(failedFooter), "dot-warning"), "失败应为警示圆点");
+  assert.ok(!hasClass(dotOf(failedFooter), "dot-success"), "失败不得显示成功圆点");
+  failed.locale.setLocale("en");
+  assert.ok(textOf(footerOf(renderSlot(failed, failed.drawer, { useSessions: useSessionsFor("ledger") }))).includes("Refresh failed"), "新增状态文案应随语言切换");
+  failed.locale.setLocale("zh");
+
+  // 加载中且无快照：等待账本响应 + 中性点
+  const firstLoad = await harness();
+  renderSlot(firstLoad, firstLoad.header, { sessionId: "ledger" });
+  firstLoad.react.runEffects(); await tick();
+  clickEntry(renderSlot(firstLoad, firstLoad.header, { sessionId: "ledger" }) as Element);
+  firstLoad.react.runEffects();
+  const loadingFooter = footerOf(renderSlot(firstLoad, firstLoad.drawer, { useSessions: useSessionsFor("ledger") }));
+  assert.ok(textOf(loadingFooter).includes("等待账本响应"), "首次加载应显示等待账本响应");
+  assert.ok(hasClass(dotOf(loadingFooter), "dot-neutral"));
+
+  // 加载中且有旧快照：正在刷新 + 中性点
+  const refreshing = await harness();
+  await openDrawer(refreshing);
+  refreshing.react.runEffects(); await tick();
+  refreshing.rpc.balancesHang = true;
+  fireVisibility(refreshing);
+  await tick(); refreshing.react.runEffects();
+  const refreshingFooter = footerOf(renderSlot(refreshing, refreshing.drawer, { useSessions: useSessionsFor("ledger") }));
+  assert.ok(textOf(refreshingFooter).includes("正在刷新"), "带旧快照加载应显示正在刷新");
+  assert.ok(hasClass(dotOf(refreshingFooter), "dot-neutral"));
+
+  // 新鲜快照：每 30 秒自动刷新 + 成功点
+  const fresh = await harness();
+  const freshTree = await openDrawer(fresh);
+  const freshFooter = footerOf(freshTree);
+  assert.ok(textOf(freshFooter).includes("每 30 秒自动刷新"));
+  assert.ok(hasClass(dotOf(freshFooter), "dot-success"));
+});
+
+test("概览预览：单商品按绝对金额降序取前三，明细保持账本原顺序", async () => {
+  const singleCommodity = {
+    asOf: "2026-09-05",
+    assets: { accounts: [
+      { account: "Assets:C-活期", amounts: [{ commodity: "CNY", quantity: "100.00" }] },
+      { account: "Assets:C-理财", amounts: [{ commodity: "CNY", quantity: "-1200.00" }] },
+      { account: "Assets:C-基金", amounts: [{ commodity: "CNY", quantity: "300.00" }] },
+      { account: "Assets:C-定期", amounts: [{ commodity: "CNY", quantity: "12345678901234567890123456789.00" }] },
+    ], totals: [{ commodity: "CNY", quantity: "12345678901234567890123456789.00" }] },
+    liabilities: { accounts: [
+      { account: "Liabilities:C-信用卡", amounts: [{ commodity: "CNY", quantity: "-50.00" }] },
+    ], totals: [{ commodity: "CNY", quantity: "-50.00" }] },
+  };
+  const h = await harness({ balances: singleCommodity });
+  const overview = await openDrawer(h);
+  const miniNames = findAll(overview, (element) => classNameOf(element).includes("mini-row"))
+    .map((row) => textOf(findOne(row, (element) => hasClass(element, "mini-name"), "迷你行缺少账户名")));
+  assert.deepEqual(miniNames, ["C-定期", "C-理财", "C-基金"], "单商品预览应按绝对金额降序取前三");
+
+  const jump = findOne(overview, (element) => classNameOf(element).includes("jump"), "跳转链接缺失");
+  (jump.props.onClick as () => void)();
+  const details = renderSlot(h, h.drawer, { useSessions: useSessionsFor("ledger") });
+  const detailNames = findAll(details, (element) => classNameOf(element).endsWith("dsh-moneypal-balance-account"))
+    .map((row) => textOf(findOne(row, (element) => hasClass(element, "name"), "明细行缺少账户名")));
+  assert.deepEqual(detailNames, ["C-活期", "C-理财", "C-基金", "C-定期", "C-信用卡"], "明细不得被预览排序改写");
+});
+
+test("页签支持方向键与 Home/End 循环导航", async () => {
+  const h = await harness();
+  const overview = await openDrawer(h);
+  const tabs = findAll(overview, (element) => hasClass(element, "tab"));
+  assert.equal(tabs.length, 2);
+  const press = (element: Element, keyName: string) => (element.props.onKeyDown as (event: { key: string; preventDefault: () => void }) => void)({ key: keyName, preventDefault: () => undefined });
+  const selected = (tree: unknown, id: string) => findOne(tree, (element) => hasClass(element, "tab") && element.props.id === `dsh-moneypal-balance-tab-${id}`, `${id} 页签缺失`).props["aria-selected"];
+
+  press(tabs[0]!, "ArrowRight");
+  assert.equal(selected(renderSlot(h, h.drawer, { useSessions: useSessionsFor("ledger") }), "details"), true, "ArrowRight 应切到明细");
+  let tree = renderSlot(h, h.drawer, { useSessions: useSessionsFor("ledger") });
+  press(findOne(tree, (element) => hasClass(element, "tab") && element.props.id === "dsh-moneypal-balance-tab-details", "明细页签缺失"), "Home");
+  assert.equal(selected(renderSlot(h, h.drawer, { useSessions: useSessionsFor("ledger") }), "overview"), true, "Home 应回到概览");
+  tree = renderSlot(h, h.drawer, { useSessions: useSessionsFor("ledger") });
+  press(findOne(tree, (element) => hasClass(element, "tab") && element.props.id === "dsh-moneypal-balance-tab-overview", "概览页签缺失"), "ArrowLeft");
+  assert.equal(selected(renderSlot(h, h.drawer, { useSessions: useSessionsFor("ledger") }), "details"), true, "ArrowLeft 应从概览循环到明细");
+  tree = renderSlot(h, h.drawer, { useSessions: useSessionsFor("ledger") });
+  press(findOne(tree, (element) => hasClass(element, "tab") && element.props.id === "dsh-moneypal-balance-tab-details", "明细页签缺失"), "End");
+  assert.equal(selected(renderSlot(h, h.drawer, { useSessions: useSessionsFor("ledger") }), "details"), true, "End 停在明细");
+});
+
 test("移动端自动恢复将外部焦点移入抽屉，关闭后恢复原焦点", async () => {
   const h = await harness({ storedOpen: "true" });
   h.setCompact(true);
@@ -697,6 +947,7 @@ test("语言切换通知即时同步入口与抽屉文案，卸载后释放订�
   const drawerEn = h.react.outputOf(h.drawer) as Element;
   assert.ok(textOf(drawerEn).includes("Account Balances"), `抽屉标题应即时切换：${textOf(drawerEn)}`);
   assert.ok(textOf(drawerEn).includes("Overview"), "页签文案应即时切换");
+  assert.ok(textOf(drawerEn).includes("Auto-refreshes every 30 s"), "新增页脚状态文案应随语言即时切换");
   const refreshIcon = findOne(drawerEn, (element) => hasClass(element, "icon") && element.props["aria-label"] === "Refresh balances", "刷新按钮缺失或未切换文案");
 
   // 卸载：释放 locale 订阅与文档监听，后续通知不再更新组件
@@ -741,13 +992,15 @@ test("概览与明细渲染真实账户、多商品、大数、负资产、负�
   assert.ok(textOf(details).includes("资产合计") && textOf(details).includes("负债合计"), "分组合计缺失");
 });
 
-test("空账本呈现空状态与等待文案", async () => {
+test("空账本呈现空状态、刷新入口与暂无余额数据页脚", async () => {
   const h = await harness({ balances: EMPTY_SNAPSHOT });
   const tree = await openDrawer(h);
   assert.ok(textOf(tree).includes("暂无账户余额"), "空账本未呈现空状态");
   assert.ok(textOf(tree).includes("刷新余额"));
   const footer = findOne(tree, (element) => classNameOf(element).includes("footer"), "状态栏缺失");
-  assert.ok(textOf(footer).includes("等待余额"));
+  assert.ok(textOf(footer).includes("暂无余额数据"), "成功空账本应表达暂无数据而非等待");
+  assert.ok(hasClass(findOne(footer, (element) => classNameOf(element).includes("dot"), "状态圆点缺失"), "dot-neutral"), "暂无数据应为中性圆点");
+  assert.ok(!hasClass(findOne(footer, (element) => classNameOf(element).includes("dot"), "状态圆点缺失"), "dot-success"), "空账本不得显示成功状态");
 });
 
 test("样式随生命周期卸载，重新安装不重复", async () => {

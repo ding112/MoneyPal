@@ -38,16 +38,17 @@ window.__ModuleLoader__.load({ id: "dsh-moneypal", factory: (require) => {
     "empty.title": "暂无账户余额",
     "empty.description": "当前账本没有非零的资产或负债余额。",
     "error.title": "暂时无法读取余额",
-    "error.fallback": "请检查账本状态，然后重新读取。",
+    "error.fallback": "请检查账本状态，然后刷新余额。",
     "action.refresh": "刷新余额",
-    "action.reread": "重新读取",
     "action.retry": "重试",
     "banner.failedWithTime": "刷新失败，显示 {time} 的余额",
     "banner.failedNoTime": "刷新失败，显示的余额可能已过期。",
     "banner.pending": "余额可能已过期，正在获取最新数据。",
+    "status.refreshFailed": "刷新失败",
     "status.refreshing": "正在刷新…",
     "status.waitingLedger": "等待账本响应",
-    "status.waitingBalance": "等待余额",
+    "status.stale": "余额待更新",
+    "status.noData": "暂无余额数据",
     "status.autoRefresh": "每 30 秒自动刷新",
     "status.updatedAt": "{time} 更新",
     "status.lastSuccess": "上次成功 {time}",
@@ -80,16 +81,17 @@ window.__ModuleLoader__.load({ id: "dsh-moneypal", factory: (require) => {
     "empty.title": "No account balances",
     "empty.description": "The current ledger has no non-zero asset or liability balances.",
     "error.title": "Balances unavailable",
-    "error.fallback": "Check the ledger state, then read again.",
+    "error.fallback": "Check the ledger state, then refresh balances.",
     "action.refresh": "Refresh balances",
-    "action.reread": "Read again",
     "action.retry": "Retry",
     "banner.failedWithTime": "Refresh failed, showing balances from {time}",
     "banner.failedNoTime": "Refresh failed, the balances shown may be outdated.",
     "banner.pending": "Balances may be outdated; fetching the latest data.",
+    "status.refreshFailed": "Refresh failed",
     "status.refreshing": "Refreshing…",
     "status.waitingLedger": "Waiting for the ledger",
-    "status.waitingBalance": "Waiting for balances",
+    "status.stale": "Balances need updating",
+    "status.noData": "No balance data",
     "status.autoRefresh": "Auto-refreshes every 30 s",
     "status.updatedAt": "Updated {time}",
     "status.lastSuccess": "Last success {time}",
@@ -168,7 +170,8 @@ window.__ModuleLoader__.load({ id: "dsh-moneypal", factory: (require) => {
         overpaid ? React.createElement("span", null, t("debt.overpaid", { count: overpaid })) : null) : null);
   }
   function Overview({ snapshot, onDetails, t }) {
-    const preview = [...snapshot.assets.accounts.map((account) => ({ account, liability: false })), ...snapshot.liabilities.accounts.map((account) => ({ account, liability: true }))].slice(0, 3);
+    // 预览选择收敛到控制器纯函数：单商品按绝对金额降序，多商品保持原顺序；明细顺序不受影响。
+    const preview = runtime.selectPreviewAccounts(snapshot);
     const count = snapshot.assets.accounts.length + snapshot.liabilities.accounts.length;
     return React.createElement(React.Fragment, null,
       React.createElement(Summary, { title: t("group.assets"), data: snapshot.assets, liability: false, t }), React.createElement(Summary, { title: t("group.liabilities"), data: snapshot.liabilities, liability: true, t }),
@@ -217,23 +220,19 @@ window.__ModuleLoader__.load({ id: "dsh-moneypal", factory: (require) => {
       React.createElement("p", { role: failed ? "alert" : "status" }, message),
       React.createElement("button", { type: "button", className: cls("banner-retry"), onClick: onRetry }, t("action.retry")));
   }
-  function bodyFor({ state, tab, onDetails, onRetry, onReread, t }) {
+  /* bodyFor 的刷新动作统一走 onReload：探测失败走重新探测，余额失败直接重试余额请求。 */
+  function bodyFor({ state, tab, onDetails, onReload, t }) {
     const snapshot = state.snapshot;
     if (snapshot) {
       const empty = !snapshot.assets.accounts.length && !snapshot.liabilities.accounts.length;
-      if (empty) return StateBody({ icon: "○", title: t("empty.title"), description: t("empty.description"), action: t("action.refresh"), onAction: onRetry });
+      if (empty) return StateBody({ icon: "○", title: t("empty.title"), description: t("empty.description"), action: t("action.refresh"), onAction: onReload });
       return tab === "overview" ? Overview({ snapshot, onDetails, t }) : Details({ snapshot, t });
     }
     if (state.loading) return LoadingBody({ t });
     if (state.probeError || state.error) {
-      return StateBody({ icon: "!", title: t("error.title"), description: state.probeError ?? state.error ?? t("error.fallback"), action: t("action.reread"), alert: true, onAction: onReread });
+      return StateBody({ icon: "!", title: t("error.title"), description: state.probeError ?? state.error ?? t("error.fallback"), action: t("action.refresh"), alert: true, onAction: onReload });
     }
     return LoadingBody({ t });
-  }
-  function statusFor({ state, snapshot, empty, t }) {
-    if (state.loading) return snapshot ? t("status.refreshing") : t("status.waitingLedger");
-    if (empty || (!snapshot && (state.error || state.probeError))) return t("status.waitingBalance");
-    return t("status.autoRefresh");
   }
   function freshLabel({ state, snapshot, t }) {
     if (!snapshot) return "—";
@@ -242,8 +241,8 @@ window.__ModuleLoader__.load({ id: "dsh-moneypal", factory: (require) => {
   }
   /* 桌面：非模态抽屉，Escape 仅在焦点位于抽屉内部且未被上层浮层处理时关闭；
    * 移动端：模态对话框，背景由遮罩隔离交互；打开或切入时焦点移入抽屉，Tab 循环，关闭后恢复原焦点。
-   * onReload 为统一刷新入口：探测失败走重新探测，否则刷新余额。 */
-  function Drawer({ state, tab, onTab, compact, drawerRef, onClose, onReload, onReread, t }) {
+   * onReload 为唯一刷新入口：候选能力直接刷新余额，其余（探测失败等）走重新探测。 */
+  function Drawer({ state, tab, onTab, compact, drawerRef, onClose, onReload, t }) {
     const snapshot = state.snapshot;
     const empty = Boolean(snapshot && !snapshot.assets.accounts.length && !snapshot.liabilities.accounts.length);
     const onKeyDown = (event) => { if (event.key === "Escape" && !event.defaultPrevented) { event.preventDefault(); onClose(); } };
@@ -260,10 +259,15 @@ window.__ModuleLoader__.load({ id: "dsh-moneypal", factory: (require) => {
         React.createElement("div", { className: cls("tab-wrap") }, React.createElement(TabBar, { tab, onSelect: onTab, t })),
         snapshot && state.stale ? React.createElement(Banner, { state, onRetry: onReload, t }) : null,
         React.createElement("div", { id: PANEL_ID, role: "tabpanel", className: cls("content"), "aria-labelledby": `${TAB_PREFIX}-${tab}` },
-          bodyFor({ state, tab, onDetails: () => { onTab("details"); document.getElementById(`${TAB_PREFIX}-details`)?.focus(); }, onRetry: onReload, onReread, t })),
-        React.createElement("footer", { className: cls("footer") },
-          React.createElement("span", null, React.createElement("i", { className: cls("dot"), "aria-hidden": "true" }), statusFor({ state, snapshot, empty, t })),
-          React.createElement("span", null, freshLabel({ state, snapshot, t })))));
+          bodyFor({ state, tab, onDetails: () => { onTab("details"); document.getElementById(`${TAB_PREFIX}-details`)?.focus(); }, onReload, t })),
+        React.createElement("footer", { className: cls("footer") }, (() => {
+          // 页脚状态模型在控制器侧维护（runtime.footerStatus）：文案键 + 圆点类型，含义由文字表达。
+          const status = runtime.footerStatus(state);
+          return [
+            React.createElement("span", { key: "status" }, React.createElement("i", { className: cls("dot", `dot-${status.dot}`), "aria-hidden": "true" }), t(status.key)),
+            React.createElement("span", { key: "fresh" }, freshLabel({ state, snapshot, t })),
+          ];
+        })())));
   }
   /* 移动端模态焦点循环；焦点停在抽屉根节点或仍在外部（打开瞬间、遮罩外的背景）时，Tab 直接落到循环边界，
    * 无可聚焦控件时聚焦抽屉本身。桌面不安装全局键盘处理，背景（对话）保持可操作。 */
@@ -326,7 +330,11 @@ window.__ModuleLoader__.load({ id: "dsh-moneypal", factory: (require) => {
       const state = useBalanceState();
       const t = useLocale();
       React.useEffect(() => { void controller.setSession(sessionProps.sessionId); }, [sessionProps.sessionId]);
-      if (!sessionProps.sessionId || state.sessionId !== sessionProps.sessionId || state.capability !== "candidate") return null;
+      if (!sessionProps.sessionId || state.sessionId !== sessionProps.sessionId) return null;
+      // 入口规则：候选会话常显；普通会话隐藏；未知能力下仅探测失败或抽屉已打开时提供恢复入口
+      // （冷退避与首次探测期间隐藏，避免普通会话初次探测时闪现；重试清除错误后靠“已打开”保持入口可见）。
+      const showEntry = state.capability === "candidate" || (state.capability === "unknown" && (Boolean(state.probeError) || state.open));
+      if (!showEntry) return null;
       return Entry({ open: state.open, t, onActivate: (event) => { lastTrigger = event.currentTarget; pendingFocus = true; void controller.toggle(true); } });
     }
 
@@ -356,14 +364,13 @@ window.__ModuleLoader__.load({ id: "dsh-moneypal", factory: (require) => {
       }, [state.open, compact]);
       if (!state.open) return null;
       const close = () => { setTab("overview"); void controller.toggle(false).then(focusTrigger); };
-      // 统一刷新入口：探测失败时刷新按钮走重新探测，否则走余额刷新。
-      const reload = () => { void (state.probeError ? controller.retry() : controller.refresh()); };
+      // 唯一刷新路由：候选能力且无探测失败时刷新余额（普通失败直接重试余额），其余情况重新探测恢复。
+      const reload = () => { void (state.capability === "candidate" && !state.probeError ? controller.refresh() : controller.retry()); };
       return React.createElement(Drawer, {
         state, tab, compact, drawerRef, t,
         onTab: setTab,
         onClose: close,
         onReload: reload,
-        onReread: () => void controller.retry(),
       });
     }
 
