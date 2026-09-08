@@ -147,16 +147,37 @@ function safeMessage(error: unknown): string { return error instanceof BalanceCl
 export function localDate(value: Date): string { const year = value.getFullYear(); const month = String(value.getMonth() + 1).padStart(2, "0"); const day = String(value.getDate()).padStart(2, "0"); return `${year}-${month}-${day}`; }
 export interface FormattedAmount { value: string; currency: string; negative: boolean; }
 
-/** 拆分数值与币种，供界面分别排版；字符串保持账本精度，不经过浮点数。 */
-export function formatAmountParts(amount: { commodity: string; quantity: string }, negate = false): FormattedAmount {
-  const [integerPart, fraction = ""] = amount.quantity.replace(/^-?/u, "").split(".");
-  const negative = amount.quantity.startsWith("-") !== negate;
-  const integer = integerPart.replace(/\B(?=(\d{3})+(?!\d))/gu, ",");
-  return { value: `${negative ? "-" : ""}${integer}${fraction ? `.${fraction}` : ""}`, currency: amount.commodity, negative };
+const integerFormatters = new Map<string, Intl.NumberFormat>();
+const decimalSeparators = new Map<string, string>();
+
+/** 整数部分分组格式化器按 locale 缓存：分组是展示习惯，与账本数值无关。 */
+function integerGrouping(locale: string): Intl.NumberFormat {
+  let formatter = integerFormatters.get(locale);
+  if (!formatter) { formatter = new Intl.NumberFormat(locale, { useGrouping: true, maximumFractionDigits: 0 }); integerFormatters.set(locale, formatter); }
+  return formatter;
 }
 
-export function formatAmount(amount: { commodity: string; quantity: string }, negate = false): string {
-  const parts = formatAmountParts(amount, negate);
+/** 小数分隔符取自同 locale 的常量 1.1，不含账本数据。 */
+function decimalSeparator(locale: string): string {
+  let separator = decimalSeparators.get(locale);
+  if (!separator) {
+    separator = new Intl.NumberFormat(locale).formatToParts(1.1).find((part) => part.type === "decimal")?.value ?? ".";
+    decimalSeparators.set(locale, separator);
+  }
+  return separator;
+}
+
+/** 拆分数值与币种，供界面分别排版；字符串保持账本精度，不经过浮点数。
+ * 整数部分经 BigInt 与 Intl 分组（支持任意位数），小数部分原样保留全部尾随零；locale 仅影响分组与分隔符。 */
+export function formatAmountParts(amount: { commodity: string; quantity: string }, negate = false, locale = "zh-CN"): FormattedAmount {
+  const [integerPart, fraction = ""] = amount.quantity.replace(/^-?/u, "").split(".");
+  const negative = amount.quantity.startsWith("-") !== negate;
+  const integer = integerGrouping(locale).format(BigInt(integerPart || "0"));
+  return { value: `${negative ? "-" : ""}${integer}${fraction ? `${decimalSeparator(locale)}${fraction}` : ""}`, currency: amount.commodity, negative };
+}
+
+export function formatAmount(amount: { commodity: string; quantity: string }, negate = false, locale = "zh-CN"): string {
+  const parts = formatAmountParts(amount, negate, locale);
   return `${parts.value} ${parts.currency}`;
 }
 

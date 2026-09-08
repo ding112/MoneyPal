@@ -961,6 +961,296 @@ test("语言切换通知即时同步入口与抽屉文案，卸载后释放订�
   assert.equal(h.react.outputOf(h.drawer), undefined, "卸载后通知不得再更新组件");
 });
 
+test("内容面板可聚焦并是 Tab 循环的末位停靠点，焦点样式覆盖面板", async () => {
+  const h = await harness();
+  const overview = await openDrawer(h);
+  const panelOf = (tree: unknown) => findOne(tree, (element) => element.props.role === "tabpanel", "内容面板缺失");
+  const panel = panelOf(overview);
+  assert.equal(panel.props.tabIndex, 0, "tabpanel 应设置 tabIndex 0 供键盘停靠滚动");
+  assert.equal(panel.props.id, "dsh-moneypal-balance-panel");
+  // 对齐 cycleTabFocus 的选择器语义收集可聚焦节点：非禁用按钮与显式 tabIndex >= 0 的元素
+  const focusables = (tree: unknown) => findAll(tree, (element) => {
+    if (element.type === "button") return element.props.disabled !== true && element.props.tabIndex !== -1;
+    return typeof element.props.tabIndex === "number" && element.props.tabIndex >= 0;
+  });
+  assert.ok(focusables(overview).includes(panel), "概览页签下面板应在 Tab 序列内");
+  (findOne(overview, (element) => classNameOf(element).includes("jump"), "跳转链接缺失").props.onClick as () => void)();
+  const details = renderSlot(h, h.drawer, { useSessions: useSessionsFor("ledger") });
+  // 明细正文没有可聚焦控件，面板成为末位停靠点（移动端焦点循环由此把 Shift+Tab 归还到最后一站）
+  assert.equal(focusables(details).at(-1), panelOf(details), "明细页签下面板应是最后一个 Tab 停靠点");
+  const css = h.head.find((style) => style.id === "dsh-moneypal-balance-style")!.textContent;
+  assert.ok(css.includes(".dsh-moneypal-balance-content:focus-visible"), "内容面板未加入 focus-visible 清单");
+  assert.ok(/\.dsh-moneypal-balance-content:focus-visible \{\n  outline-offset: -2px;/u.test(css), "面板轮廓应向内偏移避免裁切");
+});
+
+test("分区与状态标题统一为 h3，账户与商品名禁止翻译而说明文案保持可翻译", async () => {
+  const h = await harness();
+  const overview = await openDrawer(h);
+  // 概览：资产、负债、账户一览三个标题行各含一个 h3；Summary 的数量 em 是标题的兄弟元素
+  const labels = findAll(overview, (element) => classNameOf(element).includes("section-label"));
+  assert.equal(labels.length, 3, "概览应有三个分区标题行");
+  for (const label of labels.slice(0, 2)) {
+    assert.equal(findAll(label, (element) => element.type === "h3").length, 1, "资产/负债标题行应恰好有一个 h3");
+    assert.equal(findAll(label, (element) => element.type === "em").length, 1, "账户数量应保留为标题的兄弟 em");
+  }
+  assert.equal(findAll(labels[2]!, (element) => element.type === "h3").length, 1, "账户一览标题应为 h3");
+  assert.equal(findAll(labels[2]!, (element) => element.type === "em").length, 0, "账户一览标题不携带数量 em");
+  assert.equal(findAll(overview, (element) => element.type === "h4").length, 0, "概览不得残留 h4");
+
+  (findOne(overview, (element) => classNameOf(element).includes("jump"), "跳转链接缺失").props.onClick as () => void)();
+  const details = renderSlot(h, h.drawer, { useSessions: useSessionsFor("ledger") });
+  const groupHeads = findAll(details, (element) => classNameOf(element).includes("group-head"));
+  assert.equal(groupHeads.length, 2, "明细应有资产与负债两个组头");
+  for (const head of groupHeads) {
+    assert.equal(findAll(head, (element) => element.type === "h3").length, 1, "明细组头应为 h3");
+    assert.equal(findAll(head, (element) => element.type === "b").length, 0, "明细组头不得再用 b");
+  }
+  assert.equal(findAll(details, (element) => element.type === "h4").length, 0, "明细不得残留 h4");
+
+  // 翻译保护：账户名容器（含明细路径）与商品标识 translate=no，说明文案不标记
+  assert.equal(findAll(details, (element) => hasClass(element, "name"))[0]!.props.translate, "no", "账户名容器应禁止翻译");
+  assert.equal(findAll(overview, (element) => hasClass(element, "mini-name"))[0]!.props.translate, "no", "概览账户名应禁止翻译");
+  assert.equal(findAll(details, (element) => hasClass(element, "currency"))[0]!.props.translate, "no", "商品标识应禁止翻译");
+  const caption = findOne(overview, (element) => classNameOf(element).includes("caption-line"), "说明文案缺失");
+  assert.equal(caption.props.translate, undefined, "说明文案不得标记禁止翻译");
+
+  // 空状态与错误状态标题也是 h3
+  const emptyH = await harness({ balances: EMPTY_SNAPSHOT });
+  const emptyHeads = findAll(await openDrawer(emptyH), (element) => element.type === "h3");
+  assert.equal(emptyHeads.length, 1, "空状态应只有一个内部标题");
+  assert.equal(textOf(emptyHeads[0]!), "暂无账户余额");
+
+  const errorH = await harness();
+  errorH.rpc.capabilityOk = false;
+  renderSlot(errorH, errorH.header, { sessionId: "ledger" });
+  errorH.react.runEffects(); await tick();
+  clickEntry(renderSlot(errorH, errorH.header, { sessionId: "ledger" }) as Element);
+  await tick(); errorH.react.runEffects();
+  const errorHeads = findAll(renderSlot(errorH, errorH.drawer, { useSessions: useSessionsFor("ledger") }), (element) => element.type === "h3");
+  assert.equal(errorHeads.length, 1, "错误状态应只有一个内部标题");
+  assert.equal(textOf(errorHeads[0]!), "暂时无法读取余额");
+});
+
+test("手动刷新读屏播报：挂起显示刷新中、完成显示余额已更新、重复点击不加请求", async () => {
+  const h = await harness();
+  await openDrawer(h);
+  h.react.runEffects();
+  const liveRegion = (tree: unknown) => findOne(tree, (element) => element.props.role === "status" && element.props["aria-live"] === "polite" && element.props["aria-atomic"] === "true", "专用播报节点缺失");
+  const refreshButton = (tree: unknown) => findOne(tree, (element) => hasClass(element, "icon") && element.props["aria-label"] === "刷新余额", "刷新按钮缺失");
+  let tree = renderSlot(h, h.drawer, { useSessions: useSessionsFor("ledger") });
+  assert.equal(textOf(liveRegion(tree)), "", "后台首次加载成功不得写入播报");
+
+  let release!: (value: unknown) => void;
+  h.rpc.balances = () => new Promise((resolve) => { release = resolve; });
+  (refreshButton(tree).props.onClick as () => void)();
+  h.react.runEffects();
+  assert.equal(textOf(liveRegion(renderSlot(h, h.drawer, { useSessions: useSessionsFor("ledger") }))), "正在刷新…", "手动刷新挂起应播报刷新中");
+
+  // 加载中重复点击：不加请求、不重置播报
+  const callsBefore = h.rpc.calls.filter((endpoint) => endpoint === "balances").length;
+  (refreshButton(renderSlot(h, h.drawer, { useSessions: useSessionsFor("ledger") })).props.onClick as () => void)();
+  h.react.runEffects();
+  assert.equal(h.rpc.calls.filter((endpoint) => endpoint === "balances").length, callsBefore, "加载中重复点击不得增加请求");
+  assert.equal(textOf(liveRegion(renderSlot(h, h.drawer, { useSessions: useSessionsFor("ledger") }))), "正在刷新…", "重复点击不得重置播报");
+
+  // 余额完成：播报已完成并显示新快照
+  release(variantSnapshot("手动刷新"));
+  await tick(); h.react.runEffects();
+  tree = renderSlot(h, h.drawer, { useSessions: useSessionsFor("ledger") });
+  assert.equal(textOf(liveRegion(tree)), "余额已更新", "手动刷新成功应播报完成");
+  assert.ok(textOf(tree).includes("C-现金·手动刷新"), "完成时应显示新快照");
+
+  // 后续后台刷新不得改写专用播报
+  fireVisibility(h);
+  await tick(); h.react.runEffects();
+  assert.equal(textOf(liveRegion(renderSlot(h, h.drawer, { useSessions: useSessionsFor("ledger") }))), "余额已更新", "后台刷新不得改写专用播报");
+});
+
+test("手动刷新失败只保留 alert 不播报成功；后台刷新成功播报区保持安静", async () => {
+  const h = await harness();
+  await openDrawer(h);
+  h.react.runEffects();
+  const liveRegion = (tree: unknown) => findOne(tree, (element) => element.props.role === "status" && element.props["aria-live"] === "polite", "专用播报节点缺失");
+  const refreshButton = (tree: unknown) => findOne(tree, (element) => hasClass(element, "icon") && element.props["aria-label"] === "刷新余额", "刷新按钮缺失");
+
+  // 后台刷新成功：播报区保持空
+  fireVisibility(h);
+  await tick(); h.react.runEffects();
+  assert.equal(textOf(liveRegion(renderSlot(h, h.drawer, { useSessions: useSessionsFor("ledger") }))), "", "后台成功不得播报");
+
+  // 手动刷新失败：播报清除，错误交给既有 alert
+  h.rpc.balancesError = { code: "balances_unavailable", message: "读取余额失败" };
+  let tree = renderSlot(h, h.drawer, { useSessions: useSessionsFor("ledger") });
+  (refreshButton(tree).props.onClick as () => void)();
+  h.react.runEffects();
+  assert.equal(textOf(liveRegion(renderSlot(h, h.drawer, { useSessions: useSessionsFor("ledger") }))), "正在刷新…");
+  await tick(); h.react.runEffects();
+  tree = renderSlot(h, h.drawer, { useSessions: useSessionsFor("ledger") });
+  assert.equal(textOf(liveRegion(tree)), "", "失败后不得播报成功");
+  const banner = findOne(tree, (element) => hasClass(element, "banner"), "失败后应显示横幅");
+  assert.equal(findOne(banner, (element) => element.type === "p", "横幅缺少消息").props.role, "alert", "失败提示应保留 alert");
+
+  // 横幅重试同属手动刷新：恢复后播报完成
+  h.rpc.balancesError = undefined;
+  h.rpc.balances = variantSnapshot("横幅重试");
+  (findOne(banner, (element) => hasClass(element, "banner-retry"), "横幅缺少重试按钮").props.onClick as () => void)();
+  h.react.runEffects();
+  await tick(); h.react.runEffects();
+  const recovered = renderSlot(h, h.drawer, { useSessions: useSessionsFor("ledger") });
+  assert.equal(textOf(liveRegion(recovered)), "余额已更新", "横幅重试成功应播报完成");
+  assert.ok(textOf(recovered).includes("C-现金·横幅重试"), "重试成功应显示新快照");
+});
+
+test("探测成功但余额仍挂起时不得提前播报完成", async () => {
+  const h = await harness();
+  h.rpc.capabilityOk = false;
+  renderSlot(h, h.header, { sessionId: "ledger" });
+  h.react.runEffects(); await tick();
+  clickEntry(renderSlot(h, h.header, { sessionId: "ledger" }) as Element);
+  await tick(); h.react.runEffects();
+  // 先渲染抽屉并跑完挂载 effect（对齐真实 React 提交时序），再触发交互
+  const tree = renderSlot(h, h.drawer, { useSessions: useSessionsFor("ledger") });
+  h.react.runEffects();
+  const action = findOne(tree, (element) => hasClass(element, "state-action"), "错误态缺少刷新按钮");
+  let release!: (value: unknown) => void;
+  h.rpc.capabilityOk = true;
+  h.rpc.balances = () => new Promise((resolve) => { release = resolve; });
+  (action.props.onClick as () => void)();
+  h.react.runEffects();
+  const liveRegion = (tree: unknown) => findOne(tree, (element) => element.props.role === "status" && element.props["aria-live"] === "polite", "专用播报节点缺失");
+  assert.equal(textOf(liveRegion(renderSlot(h, h.drawer, { useSessions: useSessionsFor("ledger") }))), "正在刷新…", "重试挂起应播报刷新中");
+  await tick(); h.react.runEffects();
+  // 探测已确认候选并自动补拉余额，但余额请求尚未返回
+  const probing = renderSlot(h, h.drawer, { useSessions: useSessionsFor("ledger") });
+  assert.ok(textOf(probing).includes("正在读取账户余额…"), "探测成功后应显示加载正文");
+  assert.equal(textOf(liveRegion(probing)), "正在刷新…", "余额未就绪不得提前播报完成");
+  release(fixtureSnapshot());
+  await tick(); h.react.runEffects();
+  assert.equal(textOf(liveRegion(renderSlot(h, h.drawer, { useSessions: useSessionsFor("ledger") }))), "余额已更新", "余额就绪后播报完成");
+});
+
+test("关闭、切会话与页面隐藏后，迟到的手动刷新结果不再播报", async () => {
+  const liveRegion = (tree: unknown) => findOne(tree, (element) => element.props.role === "status" && element.props["aria-live"] === "polite", "专用播报节点缺失");
+  const refreshButton = (tree: unknown) => findOne(tree, (element) => hasClass(element, "icon") && element.props["aria-label"] === "刷新余额", "刷新按钮缺失");
+  const closeButton = (tree: unknown) => findOne(tree, (element) => hasClass(element, "icon") && element.props["aria-label"] === "关闭账户余额", "关闭按钮缺失");
+
+  // 关闭：迟到结果不播报，重开（后台自动刷新）后播报区仍为空
+  const closed = await harness();
+  await openDrawer(closed);
+  closed.react.runEffects();
+  let release!: (value: unknown) => void;
+  closed.rpc.balances = () => new Promise((resolve) => { release = resolve; });
+  (refreshButton(renderSlot(closed, closed.drawer, { useSessions: useSessionsFor("ledger") })).props.onClick as () => void)();
+  closed.react.runEffects();
+  (closeButton(renderSlot(closed, closed.drawer, { useSessions: useSessionsFor("ledger") })).props.onClick as () => void)();
+  closed.react.runEffects();
+  release(variantSnapshot("迟到"));
+  await tick(); closed.react.runEffects();
+  assert.equal(findAll(renderSlot(closed, closed.drawer, { useSessions: useSessionsFor("ledger") }), (element) => element.type === "aside").length, 0, "抽屉应保持关闭");
+  clickEntry(renderSlot(closed, closed.header, { sessionId: "ledger" }) as Element);
+  await tick(); closed.react.runEffects();
+  assert.equal(textOf(liveRegion(renderSlot(closed, closed.drawer, { useSessions: useSessionsFor("ledger") }))), "", "关闭后的迟到结果不得在重开时播报");
+
+  // 切会话：标记清除，迟到结果不进入播报（candidateOverride 让新会话也是候选，抽屉保持打开）
+  const switched = await harness();
+  switched.rpc.candidateOverride = true;
+  await openDrawer(switched);
+  switched.react.runEffects();
+  let releaseSwitched!: (value: unknown) => void;
+  switched.rpc.balances = () => new Promise((resolve) => { releaseSwitched = resolve; });
+  (refreshButton(renderSlot(switched, switched.drawer, { useSessions: useSessionsFor("ledger") })).props.onClick as () => void)();
+  switched.react.runEffects();
+  renderSlot(switched, switched.header, { sessionId: "other" });
+  switched.react.runEffects(); await tick(); switched.react.runEffects();
+  releaseSwitched(fixtureSnapshot());
+  await tick(); switched.react.runEffects();
+  const otherTree = renderSlot(switched, switched.drawer, { useSessions: useSessionsFor("other") });
+  assert.equal(findAll(otherTree, (element) => element.type === "aside").length, 1, "候选会话应保持抽屉打开");
+  assert.equal(textOf(liveRegion(otherTree)), "", "切会话后的迟到结果不得播报");
+
+  // 页面隐藏：播报与标记清除，恢复可见后的迟到结果与后台刷新不播报
+  const hidden = await harness();
+  await openDrawer(hidden);
+  hidden.react.runEffects();
+  let releaseHidden!: (value: unknown) => void;
+  hidden.rpc.balances = () => new Promise((resolve) => { releaseHidden = resolve; });
+  (refreshButton(renderSlot(hidden, hidden.drawer, { useSessions: useSessionsFor("ledger") })).props.onClick as () => void)();
+  hidden.react.runEffects();
+  assert.equal(textOf(liveRegion(renderSlot(hidden, hidden.drawer, { useSessions: useSessionsFor("ledger") }))), "正在刷新…");
+  hidden.document.visibilityState = "hidden";
+  fireVisibility(hidden);
+  hidden.react.runEffects();
+  assert.equal(textOf(liveRegion(renderSlot(hidden, hidden.drawer, { useSessions: useSessionsFor("ledger") }))), "", "页面隐藏应清除播报");
+  releaseHidden(fixtureSnapshot());
+  await tick(); hidden.react.runEffects();
+  hidden.document.visibilityState = "visible";
+  fireVisibility(hidden);
+  await tick(); hidden.react.runEffects();
+  assert.equal(textOf(liveRegion(renderSlot(hidden, hidden.drawer, { useSessions: useSessionsFor("ledger") }))), "", "恢复后的迟到结果与后台刷新不得播报");
+});
+
+test("宿主语言切换即时更新截至日期与时钟格式，且不触发请求", async () => {
+  const h = await harness();
+  const tree = await openDrawer(h);
+  h.react.runEffects();
+  const subtitleOf = (current: unknown) => textOf(findOne(current, (element) => hasClass(element, "subtitle"), "副标题缺失"));
+  const expectedAsOf = (active: string) => new Intl.DateTimeFormat(active, { year: "numeric", month: "2-digit", day: "2-digit", timeZone: "UTC" }).format(Date.UTC(2026, 8, 5));
+  assert.equal(subtitleOf(tree), `截至 ${expectedAsOf("zh-CN")}`, "中文截至日期应按 zh-CN 格式化");
+
+  // 失败横幅携带刷新时间时钟
+  h.rpc.balancesError = { code: "balances_unavailable", message: "读取余额失败" };
+  fireVisibility(h);
+  await tick(); h.react.runEffects();
+  const failed = renderSlot(h, h.drawer, { useSessions: useSessionsFor("ledger") });
+  assert.match(textOf(findOne(failed, (element) => hasClass(element, "banner"), "横幅缺失")), /刷新失败，显示 \d{2}:\d{2} 的余额/u, "中文时钟应为 24 小时制两位");
+
+  const callsBefore = h.rpc.calls.length;
+  h.locale.setLocale("en");
+  assert.equal(h.rpc.calls.length, callsBefore, "语言切换不得触发请求");
+  const en = h.react.outputOf(h.drawer) as Element;
+  assert.equal(subtitleOf(en), `As of ${expectedAsOf("en-US")}`, "英文截至日期应按 en-US 格式化");
+  assert.match(textOf(findOne(en, (element) => hasClass(element, "banner"), "横幅缺失")), /Refresh failed, showing balances from \d{2}:\d{2} [AP]M/u, "英文时钟应为 12 小时制带上下午");
+  h.locale.setLocale("zh");
+});
+
+test("截至日期按 UTC 构造，UTC 正负偏移时区均不跨天", async () => {
+  const originalTZ = process.env.TZ;
+  try {
+    for (const zone of ["Pacific/Kiritimati", "Pacific/Midway"]) {
+      process.env.TZ = zone;
+      const h = await harness();
+      const tree = await openDrawer(h);
+      const subtitleOf = (current: unknown) => textOf(findOne(current, (element) => hasClass(element, "subtitle"), "副标题缺失"));
+      const expectedAsOf = (active: string) => new Intl.DateTimeFormat(active, { year: "numeric", month: "2-digit", day: "2-digit", timeZone: "UTC" }).format(Date.UTC(2026, 8, 5));
+      assert.equal(subtitleOf(tree), `截至 ${expectedAsOf("zh-CN")}`, `${zone} 下中文日期不得跨天`);
+      h.locale.setLocale("en");
+      assert.equal(subtitleOf(h.react.outputOf(h.drawer)), `As of ${expectedAsOf("en-US")}`, `${zone} 下英文日期不得跨天`);
+    }
+  } finally {
+    if (originalTZ === undefined) delete process.env.TZ; else process.env.TZ = originalTZ;
+  }
+});
+
+test("明细分组仅在账户总数超过 50 时启用渲染优化修饰类", async () => {
+  const build = (count: number) => ({
+    asOf: "2026-09-05",
+    assets: { accounts: Array.from({ length: count }, (_, index) => ({ account: `Assets:C-账户${String(index + 1).padStart(2, "0")}`, amounts: [{ commodity: "CNY", quantity: "1.00" }] })), totals: [] as unknown[] },
+    liabilities: { accounts: [] as unknown[], totals: [] as unknown[] },
+  });
+  const openDetails = async (balances: unknown) => {
+    const current = await harness({ balances });
+    const overview = await openDrawer(current);
+    (findOne(overview, (element) => classNameOf(element).includes("jump"), "跳转链接缺失").props.onClick as () => void)();
+    return renderSlot(current, current.drawer, { useSessions: useSessionsFor("ledger") });
+  };
+  const exact = await openDetails(build(50));
+  assert.equal(findAll(exact, (element) => classNameOf(element).endsWith("dsh-moneypal-balance-account")).length, 50, "50 行应完整渲染");
+  assert.equal(findAll(exact, (element) => hasClass(element, "group-large")).length, 0, "50 个账户不启用修饰类");
+  const over = await openDetails(build(51));
+  assert.equal(findAll(over, (element) => classNameOf(element).endsWith("dsh-moneypal-balance-account")).length, 51, "51 行应完整渲染");
+  assert.equal(findAll(over, (element) => hasClass(element, "group-large")).length, 2, "51 个账户时两个明细分组均启用修饰类");
+});
+
 test("概览与明细渲染真实账户、多商品、大数、负资产、负债溢缴与长列表", async () => {
   const h = await harness();
   const overview = await openDrawer(h);
@@ -982,6 +1272,7 @@ test("概览与明细渲染真实账户、多商品、大数、负资产、负�
   const details = renderSlot(h, h.drawer, { useSessions: useSessionsFor("ledger") });
   const rows = findAll(details, (element) => classNameOf(element).endsWith("dsh-moneypal-balance-account"));
   assert.equal(rows.length, 54, "明细应完整渲染全部 54 个账户");
+  assert.equal(findAll(details, (element) => hasClass(element, "group-large")).length, 2, "54 个账户时长列表修饰类应启用");
   const rowTexts = rows.map((row) => textOf(row)).join("\n");
   assert.ok(rowTexts.includes("C-现金"), "账户名应保留 C- 前缀");
   assert.ok(rowTexts.includes("12,345,678,901,234,567.89"), "大数明细缺失");
