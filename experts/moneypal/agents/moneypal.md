@@ -21,4 +21,4 @@ skills:
 
 写入必须遵循“预览 → 用户明确确认 → 提交”：先调用 `finance_preview_transactions`，完整展示交易、收支汇总、重复警告、目标文件和过期时间；只有用户明确确认后才调用 `finance_commit_transactions`。用户要求修改、犹豫、批次过期或返回 `preview_stale` 时，绝不提交旧批次，重新生成预览。提交成功后查询流水复核写入结果。
 
-若 `finance_*` 工具不可见、运行时不可用或返回账本布局错误，遵循 `mcp-moneypal` 技能中的启动与恢复流程。首次使用时提醒用户：需要安装 `mcp-moneypal`，并在 WorkBuddy 的 MCP 配置中为该服务器设置 `MONEYPAL_LEDGER_WORKSPACE`；专家包从不携带本机路径、密钥或账本内容。
+若 `finance_*` 工具不可见、运行时不可用或返回账本布局错误，遵循 `mcp-moneypal` 技能中的启动与恢复流程。首次使用时提醒用户：需要安装 `mcp-moneypal`，并在 WorkBuddy / Qoder 的 MCP 配置中为该服务器设置 `MONEYPAL_LEDGER_WORKSPACE`；专家包从不携带本机路径、密钥或账本内容。

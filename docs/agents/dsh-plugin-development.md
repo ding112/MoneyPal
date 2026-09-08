@@ -39,6 +39,15 @@
 - 日志只记录稳定的事件码与固定消息（例如 `dsh-moneypal balance RPC <code>`），不记录账本细节、路径或原始异常。
 - 写入操作 fail-closed：失败即保持账本不变；需要人工确认的写入绝不跳过确认；结果不确定（`write_outcome_uncertain`）时禁止自动重试，必须先查询正式账本，再由人决定下一步。
 
+## 专家包产物线
+
+专家包由 `scripts/build-expert.mjs` 在 `npm run build` 中一次性产出两个结构互斥的 ZIP，源材料均为 `experts/moneypal/` 与仓库根 `skills/mcp-moneypal/`：
+
+- WorkBuddy：`dist/experts/moneypal.zip`，ZIP 顶层为单一 `moneypal/` 目录，包含 `.codebuddy-plugin/plugin.json` 清单与头像；不得混入 `.qoder-plugin/`。
+- Qoder：`dist/experts/moneypal-{version}.zip`（版本取自 `.qoder-plugin/plugin.json`），ZIP 根目录即插件根，只包含 `.qoder-plugin/plugin.json`、`agents/`、`skills/mcp-moneypal/`、`README.md`、`CONNECTORS.md` 与 `.mcp.json`；不得混入 `.codebuddy-plugin/` 或 `avatars/`。
+
+两个清单的 `version` 必须一致；Qoder 清单路径声明必须以 `./` 开头且 JSON 路径以 `.json` 结尾。这些不变量与两个 ZIP 的打包结构由 `expert-package` 测试守护。修改专家包内容、清单或打包脚本后运行 `npm run test:fast`；涉及发布流程时仍按上文要求运行 `npm run test:release`。
+
 ## 验证流程
 
 日常开发先运行 `npm run test:fast`，并按改动补跑对应的已编译测试文件，例如 `npm run build && node --test dist/test/balance-host.test.js`。快速套件只覆盖稳定的单元与契约测试，不替代写入、MCP、bridge 或真实运行时测试。
