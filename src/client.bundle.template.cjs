@@ -65,14 +65,14 @@ window.__ModuleLoader__.load({ id: "dsh-moneypal", factory: (require) => {
     "tab.details": "Details",
     "group.assets": "Assets",
     "group.liabilities": "Liabilities",
-    "group.count": "{count} accounts",
+    "group.count": "Accounts: {count}",
     "total.assets": "Total assets",
     "total.liabilities": "Total liabilities",
     "overview.list": "Accounts",
-    "overview.jump": "View all {count} accounts",
+    "overview.jump": "View account details ({count})",
     "overview.caption": "Commodities are listed separately and never converted.",
     "debt.displayNote": "Shown as amounts owed",
-    "debt.overpaid": "{count} accounts have overpayments",
+    "debt.overpaid": "Accounts with overpayments: {count}",
     "warn.overdrawn": "Overdrawn",
     "warn.overpaid": "Overpaid · refund due",
     "loading.note": "Reading account balances…",
@@ -241,7 +241,6 @@ window.__ModuleLoader__.load({ id: "dsh-moneypal", factory: (require) => {
    * onReload 为唯一刷新入口：候选能力直接刷新余额，其余（探测失败等）走重新探测。 */
   function Drawer({ state, tab, onTab, compact, drawerRef, onClose, onReload, t }) {
     const snapshot = state.snapshot;
-    const empty = Boolean(snapshot && !snapshot.assets.accounts.length && !snapshot.liabilities.accounts.length);
     const onKeyDown = (event) => { if (event.key === "Escape" && !event.defaultPrevented) { event.preventDefault(); onClose(); } };
     return React.createElement(React.Fragment, null,
       compact ? React.createElement("div", { className: cls("backdrop"), onClick: onClose, "aria-hidden": "true" }) : null,
