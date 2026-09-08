@@ -1,0 +1,64 @@
+{
+  "name": "moneypal",
+  "version": "1.0.1",
+  "description": "Helps people review and maintain their local Beancount ledgers through MoneyPal.",
+  "author": {
+    "name": "mengzai",
+    "email": "hz_dyl112@163.com"
+  },
+  "agents": [
+    "./agents/moneypal.md"
+  ],
+  "skills": [
+    "./skills/mcp-moneypal"
+  ],
+  "expertType": "agent",
+  "agentName": "moneypal",
+  "displayName": {
+    "zh": "恰恰账本",
+    "en": "MoneyPal"
+  },
+  "profession": {
+    "zh": "个人财务管家",
+    "en": "Personal Finance Steward"
+  },
+  "displayDescription": {
+    "zh": "全自动记账，账单一键导入，收支自动归类，余额报表一目了然；每笔记账先预览再确认，省心又安心。",
+    "en": "Fully automatic bookkeeping — no more manual entry, one by one! Import bills with a single click, auto-categorize income and spending, and review balances and reports at a glance. Every entry is previewed before it's written, so it's effortless and reliable."
+  },
+  "avatar": "avatars/expert.png",
+  "categoryId": "08-FinanceInvestment",
+  "defaultInitPrompt": {
+    "zh": "帮我看看本月的收支和余额",
+    "en": "Help me review this month's income, spending, and balances"
+  },
+  "plugin": "moneypal",
+  "tags": [
+    {
+      "zh": "个人记账",
+      "en": "Personal Ledger"
+    },
+    {
+      "zh": "收支分析",
+      "en": "Cash Flow Analysis"
+    },
+    {
+      "zh": "Beancount",
+      "en": "Beancount"
+    }
+  ],
+  "quickPrompts": [
+    {
+      "zh": "帮我看看本月的收支和余额",
+      "en": "Help me review this month's income, spending, and balances"
+    },
+    {
+      "zh": "午餐 支付宝 25元",
+      "en": "Lunch, via Alipay, 25 yuan"
+    },
+    {
+      "zh": "汇总本年度消费情况",
+      "en": "Summarize this year's spending"
+    }
+  ]
+}

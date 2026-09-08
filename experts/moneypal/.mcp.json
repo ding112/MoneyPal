@@ -1,0 +1,7 @@
+{
+  "mcpServers": {
+    "moneypal": {
+      "command": "mcp-moneypal"
+    }
+  }
+}
