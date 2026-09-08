@@ -27,8 +27,7 @@ window.__ModuleLoader__.load({ id: "dsh-moneypal", factory: (require) => {
     "total.assets": "资产合计",
     "total.liabilities": "负债合计",
     "overview.list": "账户一览",
-    "overview.listCount": "共 {count} 个",
-    "overview.jump": "查看全部账户明细",
+    "overview.jump": "查看全部 {count} 个账户",
     "overview.caption": "不同币种分别列示，不进行折算。",
     "debt.displayNote": "按欠款金额展示",
     "debt.overpaid": "{count} 个账户存在溢缴款",
@@ -70,8 +69,7 @@ window.__ModuleLoader__.load({ id: "dsh-moneypal", factory: (require) => {
     "total.assets": "Total assets",
     "total.liabilities": "Total liabilities",
     "overview.list": "Accounts",
-    "overview.listCount": "{count} total",
-    "overview.jump": "View all account details",
+    "overview.jump": "View all {count} accounts",
     "overview.caption": "Commodities are listed separately and never converted.",
     "debt.displayNote": "Shown as amounts owed",
     "debt.overpaid": "{count} accounts have overpayments",
@@ -160,11 +158,10 @@ window.__ModuleLoader__.load({ id: "dsh-moneypal", factory: (require) => {
     const overpaid = liability ? accounts.filter((account) => account.amounts.some((amount) => !amount.quantity.startsWith("-"))).length : 0;
     return React.createElement("section", { className: cls("section-block", liability && "debt") },
       React.createElement("div", { className: cls("section-label") },
-        React.createElement("i", { className: cls("marker"), "aria-hidden": "true" }), title,
+        title,
         React.createElement("em", null, t("group.count", { count: accounts.length }))),
-      React.createElement("div", { className: cls("totals") },
-        React.createElement("p", { className: cls("total-main") }, React.createElement(Amount, { amount: totals[0], liability, t })),
-        totals.length > 1 ? React.createElement("p", { className: cls("total-secondary") }, totals.slice(1).map((amount, index) => React.createElement(Amount, { key: `${amount.commodity}-${index}`, amount, liability, t }))) : null),
+      React.createElement("p", { className: cls("total-main") }, React.createElement(Amount, { amount: totals[0], liability, t })),
+      totals.length > 1 ? React.createElement("p", { className: cls("total-secondary") }, totals.slice(1).map((amount, index) => React.createElement(Amount, { key: `${amount.commodity}-${index}`, amount, liability, t }))) : null,
       liability ? React.createElement("p", { className: cls("inline-info") },
         React.createElement("span", null, t("debt.displayNote")),
         overpaid ? React.createElement("span", null, t("debt.overpaid", { count: overpaid })) : null) : null);
@@ -173,12 +170,13 @@ window.__ModuleLoader__.load({ id: "dsh-moneypal", factory: (require) => {
     // 预览选择收敛到控制器纯函数：单商品按绝对金额降序，多商品保持原顺序；明细顺序不受影响。
     const preview = runtime.selectPreviewAccounts(snapshot);
     const count = snapshot.assets.accounts.length + snapshot.liabilities.accounts.length;
+    const multipleCommodities = new Set([...snapshot.assets.totals, ...snapshot.liabilities.totals].map((amount) => amount.commodity)).size > 1;
     return React.createElement(React.Fragment, null,
       React.createElement(Summary, { title: t("group.assets"), data: snapshot.assets, liability: false, t }), React.createElement(Summary, { title: t("group.liabilities"), data: snapshot.liabilities, liability: true, t }),
-      React.createElement("div", { className: cls("section-label") }, t("overview.list"), React.createElement("em", null, t("overview.listCount", { count }))),
+      React.createElement("div", { className: cls("section-label") }, t("overview.list")),
       preview.map(({ account, liability }) => React.createElement(AccountRow, { key: account.account, account, liability, mini: true, t })),
-      React.createElement("button", { type: "button", className: cls("jump"), onClick: onDetails }, React.createElement("span", null, t("overview.jump")), React.createElement("span", { "aria-hidden": "true" }, "→")),
-      React.createElement("p", { className: cls("caption-line") }, t("overview.caption")));
+      React.createElement("button", { type: "button", className: cls("jump"), onClick: onDetails }, React.createElement("span", null, t("overview.jump", { count })), React.createElement("span", { "aria-hidden": "true" }, "→")),
+      multipleCommodities ? React.createElement("p", { className: cls("caption-line") }, t("overview.caption")) : null);
   }
   function Details({ snapshot, t }) {
     const group = (title, data, liability, totalLabel) => React.createElement("section", { key: title, className: cls("group", liability && "debt") },
@@ -197,9 +195,8 @@ window.__ModuleLoader__.load({ id: "dsh-moneypal", factory: (require) => {
       React.createElement("div", { className: cls("loading-note") }, t("loading.note")),
       widths.map((width, index) => React.createElement("div", { key: index, className: cls("skeleton"), style: { width, height: index === 1 ? "34px" : "16px" } })));
   }
-  function StateBody({ icon, title, description, action, alert = false, onAction }) {
+  function StateBody({ title, description, action, alert = false, onAction }) {
     return React.createElement("div", { className: cls("state-message") },
-      React.createElement("div", { className: cls("state-icon"), "aria-hidden": "true" }, icon),
       React.createElement("h4", null, title),
       React.createElement("div", alert ? { role: "alert" } : undefined, description),
       React.createElement("button", { type: "button", className: cls("state-action"), onClick: onAction }, action));
@@ -225,12 +222,12 @@ window.__ModuleLoader__.load({ id: "dsh-moneypal", factory: (require) => {
     const snapshot = state.snapshot;
     if (snapshot) {
       const empty = !snapshot.assets.accounts.length && !snapshot.liabilities.accounts.length;
-      if (empty) return StateBody({ icon: "○", title: t("empty.title"), description: t("empty.description"), action: t("action.refresh"), onAction: onReload });
+      if (empty) return StateBody({ title: t("empty.title"), description: t("empty.description"), action: t("action.refresh"), onAction: onReload });
       return tab === "overview" ? Overview({ snapshot, onDetails, t }) : Details({ snapshot, t });
     }
     if (state.loading) return LoadingBody({ t });
     if (state.probeError || state.error) {
-      return StateBody({ icon: "!", title: t("error.title"), description: state.probeError ?? state.error ?? t("error.fallback"), action: t("action.refresh"), alert: true, onAction: onReload });
+      return StateBody({ title: t("error.title"), description: state.probeError ?? state.error ?? t("error.fallback"), action: t("action.refresh"), alert: true, onAction: onReload });
     }
     return LoadingBody({ t });
   }

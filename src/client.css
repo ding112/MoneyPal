@@ -9,7 +9,7 @@
  * - 宿主缺少某个 token 时回退到主题感知的系统色（Canvas/CanvasText/GrayText 等），
  *   并保留文字与形状区分（提示是独立文本，不单靠颜色）。
  * - 关键尺寸对齐 demo：工具栏 21px 20px 12px、标题 18px、内容区 22px 20px 24px、
- *   主金额 30px、次金额 15px、明细金额 13px、主要分区间隔 23px。
+ *   主金额 30px、次金额 15px、明细金额 13px、主要分区间隔 32px。
  */
 
 .dsh-moneypal-balance-drawer {
@@ -270,18 +270,6 @@
   line-height: 1.9;
 }
 
-.dsh-moneypal-balance-state-icon {
-  display: grid;
-  place-items: center;
-  width: 52px;
-  height: 52px;
-  margin: 0 auto 17px;
-  border-radius: 16px;
-  background: var(--dsh-moneypal-balance-hover);
-  color: var(--dsh-moneypal-balance-accent);
-  font-size: 25px;
-}
-
 .dsh-moneypal-balance-state-message h4 {
   margin: 0 0 8px;
   color: var(--dsh-moneypal-balance-ink);
@@ -337,7 +325,7 @@
   font-weight: 400;
 }
 
-/* 分组标记与分区标题 */
+/* 分区标题：以文字和留白区分资产、负债 */
 .dsh-moneypal-balance-section-label {
   display: flex;
   align-items: center;
@@ -354,23 +342,9 @@
   color: var(--dsh-moneypal-balance-muted);
 }
 
-.dsh-moneypal-balance-marker {
-  flex: none;
-  width: 6px;
-  height: 6px;
-  border-radius: 2px;
-  background: var(--dsh-moneypal-balance-accent);
-}
-
-.dsh-moneypal-balance-debt .dsh-moneypal-balance-marker {
-  background: var(--dsh-moneypal-balance-warn);
-}
-
 /* 概览：主要分区与合计 */
 .dsh-moneypal-balance-section-block {
-  margin-bottom: 23px;
-  padding-bottom: 23px;
-  border-bottom: 1px solid var(--dsh-moneypal-balance-line);
+  margin-bottom: 32px;
 }
 
 .dsh-moneypal-balance-total-main {
@@ -387,7 +361,7 @@
 }
 
 /* 负债主合计：大字号警示数字实测亮色 2.79 连大字号 3:1 也不达标，升为 ink；
- * 负债语义由警示标记、按欠款金额文案与负值符号表达。 */
+ * 负债语义由分区标题、按欠款金额文案与负值符号表达。 */
 .dsh-moneypal-balance-debt .dsh-moneypal-balance-total-main {
   color: var(--dsh-moneypal-balance-ink);
 }
@@ -421,7 +395,6 @@
   align-items: center;
   gap: 12px;
   padding: 10px 0;
-  border-bottom: 1px solid var(--dsh-moneypal-balance-hairline);
   font-size: 12px;
 }
 
@@ -459,7 +432,6 @@
   justify-content: space-between;
   padding: 10px 0;
   background: var(--dsh-moneypal-balance-surface);
-  border-bottom: 1px solid var(--dsh-moneypal-balance-line);
   font-size: 12px;
 }
 
@@ -473,7 +445,6 @@
   align-items: flex-start;
   gap: 10px;
   padding: 13px 0;
-  border-bottom: 1px solid var(--dsh-moneypal-balance-hairline);
 }
 
 .dsh-moneypal-balance-name {
@@ -520,6 +491,7 @@
   gap: 15px;
   margin: 0;
   padding: 13px 0 22px;
+  border-top: 1px solid var(--dsh-moneypal-balance-hairline);
   color: var(--dsh-moneypal-balance-muted);
   font-size: 12px;
 }
