@@ -63,7 +63,7 @@ test("客户端 bundle 注册槽位、装载样式并随生命周期卸载", asy
     assert.equal(registered.namespace, "dsh-moneypal.balance");
     assert.ok(Object.keys(registered.dicts?.zh ?? {}).length > 0 && Object.keys(registered.dicts?.en ?? {}).length > 0, "locale 字典缺少 zh/en");
     assert.deepEqual(slots.map(({ definition }) => definition.id), ["dsh-moneypal-balance", "dsh-moneypal-balance-drawer"]);
-    assert.deepEqual(slots.map(({ definition }) => definition.name), ["conversation.session.header.actions", "shell.overlay"]);
+    assert.deepEqual(slots.map(({ definition }) => definition.name), ["conversation.session.header.utilities", "shell.overlay"]);
     assert.ok(slots.every(({ component }) => typeof component === "function"), "槽位必须注册组件");
     assert.equal(styles.size, 1);
     const style = styles.get("dsh-moneypal-balance-style");

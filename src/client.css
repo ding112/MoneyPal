@@ -74,8 +74,9 @@
   .dsh-moneypal-balance-backdrop { display: none; }
 }
 
-/* 标题栏余额入口：宿主风格幽灵按钮。入口位于宿主标题栏、不在抽屉 DOM 内，
- * 所需局部颜色变量必须在此重新声明并映射 DSH token，不得引用仅 .drawer 上定义的变量。 */
+/* 右侧工具区余额入口：通用“打开右侧面板”图标幽灵按钮（原生 SVG，无文字）。
+ * 入口位于宿主标题栏工具区、不在抽屉 DOM 内，所需局部颜色变量必须在此重新声明并映射 DSH token，
+ * 不得引用仅 .drawer 上定义的变量。 */
 .dsh-moneypal-balance-entry {
   --dsh-moneypal-balance-ink: var(--dsw-alias-label-primary, CanvasText);
   --dsh-moneypal-balance-muted: var(--dsw-alias-label-secondary, GrayText);
@@ -85,18 +86,27 @@
 
   appearance: none;
   border: 0;
-  padding: 5px 10px;
+  padding: 0;
+  width: 32px;
+  height: 32px;
   border-radius: 7px;
   background: transparent;
   color: var(--dsh-moneypal-balance-muted);
-  font: inherit;
-  font-size: 12px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   box-sizing: border-box;
-  min-height: 28px;
   cursor: pointer;
+}
+
+.dsh-moneypal-balance-entry svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.75;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .dsh-moneypal-balance-entry:hover {
@@ -679,9 +689,8 @@
   .dsh-moneypal-balance-drawer { line-height: 1.5; }
 
   .dsh-moneypal-balance-entry {
-    font-size: 14px;
-    min-width: 44px;
-    min-height: 44px;
+    width: 44px;
+    height: 44px;
   }
 
   .dsh-moneypal-balance-icon {

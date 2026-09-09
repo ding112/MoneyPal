@@ -1,7 +1,7 @@
 /* DSH Web lazy CommonJS 工厂（A 方案：概览/明细双页签）。
  * 分层：文案与 locale 注册 → 展示组件（纯函数，状态与文案经 props 注入）→ 样式安装 → DSH 接入（apply）。
  * 业务状态仍由编译后的 BalanceController 单点管理；样式来自 src/client.css。
- * 文案注册到宿主 LocaleRuntime（@deepseek-ai/dsh-client-locale 0.1.1-rc.2 已核验：
+ * 文案注册到宿主 LocaleRuntime（@deepseek-ai/dsh-client-locale 0.1.2-rc.1 已核验：
  * ctx.provide("locale")、register(ns, {zh, en}) 返回 disposer、bind(ns) 返回实时翻译函数、
  * 查找链 ns → common → key；locale id 仅 zh/en，zh 为 key 基准）。 */
 window.__ModuleLoader__.load({ id: "dsh-moneypal", factory: (require) => {
@@ -11,7 +11,6 @@ window.__ModuleLoader__.load({ id: "dsh-moneypal", factory: (require) => {
   /* ═══ 文案：单一来源字典，注册到宿主 locale 命名空间，跟随宿主语言切换 ═══ */
   const LOCALE_NS = "dsh-moneypal.balance";
   const ZH = {
-    "entry.label": "余额",
     "entry.aria": "查看账户余额",
     "drawer.title": "账户余额",
     "drawer.asOf": "截至 {date}",
@@ -36,6 +35,8 @@ window.__ModuleLoader__.load({ id: "dsh-moneypal", factory: (require) => {
     "loading.note": "正在读取账户余额…",
     "empty.title": "暂无账户余额",
     "empty.description": "当前账本没有非零的资产或负债余额。",
+    "ordinary.title": "尚未发现账本",
+    "ordinary.description": "当前会话工作区尚未发现 MoneyPal 账本。准备好账本后可重试。",
     "error.title": "暂时无法读取余额",
     "error.fallback": "请检查账本状态，然后刷新余额。",
     "action.refresh": "刷新余额",
@@ -54,7 +55,6 @@ window.__ModuleLoader__.load({ id: "dsh-moneypal", factory: (require) => {
     "status.lastSuccess": "上次成功 {time}",
   };
   const EN = {
-    "entry.label": "Balances",
     "entry.aria": "View account balances",
     "drawer.title": "Account Balances",
     "drawer.asOf": "As of {date}",
@@ -79,6 +79,8 @@ window.__ModuleLoader__.load({ id: "dsh-moneypal", factory: (require) => {
     "loading.note": "Reading account balances…",
     "empty.title": "No account balances",
     "empty.description": "The current ledger has no non-zero asset or liability balances.",
+    "ordinary.title": "No ledger found",
+    "ordinary.description": "No MoneyPal ledger was found in the current session workspace. Retry once it is ready.",
     "error.title": "Balances unavailable",
     "error.fallback": "Check the ledger state, then refresh balances.",
     "action.refresh": "Refresh balances",
@@ -118,6 +120,15 @@ window.__ModuleLoader__.load({ id: "dsh-moneypal", factory: (require) => {
   /* ═══ 展示组件：纯函数；不读取模块状态，state/t/回调全部经 props 注入 ═══ */
   const NS = "dsh-moneypal-balance"; const STYLE_ID = `${NS}-style`; const TITLE_ID = `${NS}-title`;
   const DRAWER_ID = `${NS}-drawer`; const TAB_PREFIX = `${NS}-tab`; const PANEL_ID = `${NS}-panel`;
+  const ENTRY_ID = `${NS}-entry`;
+  // 会话 preset 的匹配 ID：大小写精确匹配；preset 来源为会话列表项的 agentPreset 投影值（null=未组合视为未确定）。
+  const MONEYPAL_PRESET = "dsh-moneypal";
+  const selectSessionId = (sessions) => sessions.current;
+  const selectPreset = (sessions) => {
+    const entry = sessions.current ? sessions.byId[sessions.current] : undefined;
+    const preset = entry?.projectionValues?.agentPreset;
+    return typeof preset === "string" ? preset : undefined;
+  };
   const TABS = [["overview", "tab.overview"], ["details", "tab.details"]];
   const COMPACT_QUERY = "(max-width: 767px)";
   const cls = (...parts) => parts.filter(Boolean).map((part) => `${NS}-${part}`).join(" ");
@@ -133,12 +144,17 @@ window.__ModuleLoader__.load({ id: "dsh-moneypal", factory: (require) => {
     return new Intl.DateTimeFormat(locale, { year: "numeric", month: "2-digit", day: "2-digit", timeZone: "UTC" }).format(date);
   };
 
-  function Entry({ open, t, onActivate }) {
+  /* 入口：通用“打开右侧面板”图标按钮（原生 SVG，不引入图标库）；
+   * 不显示文字，title 与 aria-label 均为本地化提示，aria-expanded 恒为 false（展开时入口隐藏）。 */
+  function Entry({ t, onActivate }) {
     return React.createElement("button", {
-      type: "button", className: `${NS}-entry`, "aria-label": t("entry.aria"),
-      "aria-expanded": open, "aria-controls": DRAWER_ID,
+      type: "button", id: ENTRY_ID, className: `${NS}-entry`,
+      "aria-label": t("entry.aria"), title: t("entry.aria"),
+      "aria-controls": DRAWER_ID, "aria-expanded": false,
       onClick: (event) => onActivate(event),
-    }, t("entry.label"));
+    }, React.createElement("svg", { viewBox: "0 0 24 24", "aria-hidden": "true" },
+      React.createElement("rect", { x: "3", y: "3", width: "18", height: "18", rx: "2.5" }),
+      React.createElement("line", { x1: "15", y1: "3", x2: "15", y2: "21" })));
   }
   function Amount({ amount, liability, warning, t, locale }) {
     if (!amount) return React.createElement("span", { className: cls("amount", "amount-empty") }, "—");
@@ -234,7 +250,8 @@ window.__ModuleLoader__.load({ id: "dsh-moneypal", factory: (require) => {
       React.createElement("p", { role: failed ? "alert" : undefined }, message),
       React.createElement("button", { type: "button", className: cls("banner-retry"), onClick: onRetry }, t("action.retry")));
   }
-  /* bodyFor 的刷新动作统一走 onReload：探测失败走重新探测，余额失败直接重试余额请求。 */
+  /* bodyFor 的刷新动作统一走 onReload：探测失败走重新探测，余额失败直接重试余额请求。
+   * 判定顺序固定：快照 → 探测错误 → 无账本 → 探测中 → 余额加载/读取失败；无账本与空账本是不同状态、不同文案。 */
   function bodyFor({ state, tab, onDetails, onReload, t, locale }) {
     const snapshot = state.snapshot;
     if (snapshot) {
@@ -242,9 +259,15 @@ window.__ModuleLoader__.load({ id: "dsh-moneypal", factory: (require) => {
       if (empty) return StateBody({ title: t("empty.title"), description: t("empty.description"), action: t("action.refresh"), onAction: onReload });
       return tab === "overview" ? Overview({ snapshot, onDetails, t, locale }) : Details({ snapshot, t, locale });
     }
+    if (state.probeError) {
+      return StateBody({ title: t("error.title"), description: state.probeError, action: t("action.retry"), alert: true, onAction: onReload });
+    }
+    if (state.capability === "ordinary") {
+      return StateBody({ title: t("ordinary.title"), description: t("ordinary.description"), action: t("action.retry"), onAction: onReload });
+    }
     if (state.loading) return LoadingBody({ t });
-    if (state.probeError || state.error) {
-      return StateBody({ title: t("error.title"), description: state.probeError ?? state.error ?? t("error.fallback"), action: t("action.refresh"), alert: true, onAction: onReload });
+    if (state.error) {
+      return StateBody({ title: t("error.title"), description: state.error ?? t("error.fallback"), action: t("action.refresh"), alert: true, onAction: onReload });
     }
     return LoadingBody({ t });
   }
@@ -313,12 +336,12 @@ window.__ModuleLoader__.load({ id: "dsh-moneypal", factory: (require) => {
   function removeStyle() { document.getElementById(STYLE_ID)?.remove(); }
 
   /* ═══ DSH 接入：RPC 适配、controller、slot 注册与生命周期 ═══ */
-  let lastTrigger; let pendingFocus = false; let outsideFocus;
-  // 关闭恢复：优先恢复仍连接文档的有效触发入口，否则恢复记录的外部原焦点。
-  const focusTrigger = () => {
-    const trigger = lastTrigger; lastTrigger = undefined;
+  let pendingFocus = false; let outsideFocus;
+  // 手动关闭后的焦点恢复：优先聚焦重新挂载的入口（固定 ID），入口不存在时恢复仍连接文档的外部原焦点。
+  const focusEntryOrOutside = () => {
+    const entry = document.getElementById(ENTRY_ID);
+    if (entry) { entry.focus?.(); return; }
     const previous = outsideFocus; outsideFocus = undefined;
-    if (trigger?.isConnected) { trigger.focus?.(); return; }
     if (previous?.isConnected) previous.focus?.();
   };
   const callError = (error) => new runtime.BalanceClientError(error?.code ?? "balance_unavailable", error?.message ?? "暂时无法读取账户余额，请重试。");
@@ -327,12 +350,14 @@ window.__ModuleLoader__.load({ id: "dsh-moneypal", factory: (require) => {
   function apply(ctx) {
     installStyle();
     ctx.effect(() => removeStyle, `${NS}.style()`);
+    // 取得 window.localStorage 本身也可能抛错（隐私模式等）：安全获取，失败时降级为内存偏好。
+    const safeStorage = (() => { try { return window.localStorage; } catch { return undefined; } })();
     const controller = new runtime.BalanceController({
       rpc: {
         capability: async (sessionId, signal) => { const outer = await ctx.connection.rpc.call("/dsh-moneypal", "capability", { sessionId }, signal); if (!outer?.ok) throw callError(); const inner = outer.value; if (!inner?.ok) throw callError(inner?.error); return Boolean(inner.value?.candidate); },
         balances: async (sessionId, asOf, signal) => { const outer = await ctx.connection.rpc.call("/dsh-moneypal", "balances", { sessionId, asOf }, signal); if (!outer?.ok) throw callError(); const inner = outer.value; if (!inner?.ok) throw callError(inner?.error); return inner.value; },
       },
-      storage: window.localStorage, visible: () => document.visibilityState === "visible",
+      storage: safeStorage, visible: () => document.visibilityState === "visible",
     });
     ctx.effect(() => () => controller.dispose(), `${NS}.controller()`);
     const face = setupLocale(ctx);
@@ -346,16 +371,17 @@ window.__ModuleLoader__.load({ id: "dsh-moneypal", factory: (require) => {
       return { t: face.t, locale: snapshot?.active === "en" ? "en-US" : "zh-CN" };
     }
 
-    function HeaderSlot(sessionProps) {
+    /* 右侧工具区入口：可见性只由 preset 与会话一致性决定（capability、探测错误、账本存在性一律不参与）。
+     * 不调用 setSession：控制器上下文仅由 DrawerSlot 同步，入口只负责主动打开。 */
+    function UtilitySlot(sessionProps) {
       const state = useBalanceState();
       const { t } = useLocale();
-      React.useEffect(() => { void controller.setSession(sessionProps.sessionId); }, [sessionProps.sessionId]);
-      if (!sessionProps.sessionId || state.sessionId !== sessionProps.sessionId) return null;
-      // 入口规则：候选会话常显；普通会话隐藏；未知能力下仅探测失败或抽屉已打开时提供恢复入口
-      // （冷退避与首次探测期间隐藏，避免普通会话初次探测时闪现；重试清除错误后靠“已打开”保持入口可见）。
-      const showEntry = state.capability === "candidate" || (state.capability === "unknown" && (Boolean(state.probeError) || state.open));
-      if (!showEntry) return null;
-      return Entry({ open: state.open, t, onActivate: (event) => { lastTrigger = event.currentTarget; pendingFocus = true; void controller.toggle(true); } });
+      const sessionId = sessionProps.useSessions(selectSessionId);
+      const presetId = sessionProps.useSessions(selectPreset);
+      const show = Boolean(sessionId) && presetId === MONEYPAL_PRESET
+        && state.sessionId === sessionId && state.presetId === presetId && state.open === false;
+      if (!show) return null;
+      return Entry({ t, onActivate: () => { pendingFocus = true; void controller.toggle(true); } });
     }
 
     function DrawerSlot(globalProps) {
@@ -368,8 +394,12 @@ window.__ModuleLoader__.load({ id: "dsh-moneypal", factory: (require) => {
       // 后台自动刷新不写入 manualRef，成功保持安静；失败仍由既有错误 role="alert" 播报。
       const [announce, setAnnounce] = React.useState("");
       const manualSession = React.useRef("");
-      const sessionId = globalProps.useSessions((sessions) => sessions.current);
-      React.useEffect(() => { void controller.setSession(sessionId); }, [sessionId]);
+      const manualClose = React.useRef(false);
+      // 唯一会话同步点：会话、preset 与屏幕模式一并交给控制器；重复上下文由控制器自行忽略。
+      // 选择器返回字符串，不返回每次新建的对象，避免不稳定订阅快照。
+      const sessionId = globalProps.useSessions(selectSessionId);
+      const presetId = globalProps.useSessions(selectPreset);
+      React.useEffect(() => { void controller.setSession(sessionId, presetId, compact); }, [sessionId, presetId, compact]);
       React.useEffect(() => { setTab("overview"); }, [state.open, state.sessionId]);
       React.useEffect(() => {
         const onVisibility = () => {
@@ -393,7 +423,7 @@ window.__ModuleLoader__.load({ id: "dsh-moneypal", factory: (require) => {
       React.useEffect(() => {
         if (!state.open) return undefined;
         // 自动恢复的打开状态不抢焦点；用户主动打开（入口激活）才聚焦抽屉。
-        // 移动端（含桌面切入窄屏）为模态：焦点仍在外部时移入抽屉并记录原焦点，关闭时经 focusTrigger 恢复。
+        // 移动端（含桌面切入窄屏）为模态：焦点仍在外部时移入抽屉并记录原焦点，关闭后恢复入口或原焦点。
         if (pendingFocus) { pendingFocus = false; drawerRef.current?.focus(); }
         else if (compact) {
           const active = document.activeElement;
@@ -404,8 +434,16 @@ window.__ModuleLoader__.load({ id: "dsh-moneypal", factory: (require) => {
         document.addEventListener("keydown", onKey);
         return () => document.removeEventListener("keydown", onKey);
       }, [state.open, compact]);
+      // 手动关闭后的焦点恢复：等本次提交（入口已随 open=false 重新挂载）在 effect 中处理，不使用任意延时。
+      React.useEffect(() => {
+        if (state.open || !manualClose.current) return;
+        manualClose.current = false;
+        focusEntryOrOutside();
+      }, [state.open]);
+      // 渲染前一致性闸门：宿主当前会话/preset 与控制器一致才渲染，防止 effect 执行前露出上一会话的入口或数据。
       if (!state.open) return null;
-      const close = () => { setTab("overview"); manualSession.current = ""; setAnnounce(""); void controller.toggle(false).then(focusTrigger); };
+      if (!sessionId || presetId !== MONEYPAL_PRESET || state.sessionId !== sessionId || state.presetId !== presetId) return null;
+      const close = () => { setTab("overview"); manualSession.current = ""; setAnnounce(""); manualClose.current = true; void controller.toggle(false); };
       // 唯一刷新路由：候选能力且无探测失败时刷新余额（普通失败直接重试余额），其余情况重新探测恢复。
       // 读取最新控制器状态；页面隐藏、抽屉关闭或已在加载时忽略：不重复请求，也避免把进行中的后台刷新误标为手动刷新。
       const reload = () => {
@@ -423,7 +461,7 @@ window.__ModuleLoader__.load({ id: "dsh-moneypal", factory: (require) => {
       });
     }
 
-    ctx.slots.inject("conversation.session.header.actions", () => ctx.slots.register({ name: "conversation.session.header.actions", id: "dsh-moneypal-balance", order: 20, inject: (sessionId) => ({ sessionId }) }, HeaderSlot));
+    ctx.slots.inject("conversation.session.header.utilities", () => ctx.slots.register({ name: "conversation.session.header.utilities", id: "dsh-moneypal-balance", order: 20 }, UtilitySlot));
     ctx.slots.inject("shell.overlay", () => ctx.slots.register({ name: "shell.overlay", id: "dsh-moneypal-balance-drawer", order: 20 }, DrawerSlot));
   }
 
