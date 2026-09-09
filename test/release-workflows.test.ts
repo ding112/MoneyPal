@@ -68,6 +68,7 @@ test("Release 工作流用 Release Please 驱动、OIDC 发布并保留手动 ta
   assert.match(workflow, /run: npm run release:preflight/u);
   assert.match(workflow, /setup-runtime/u, "发布门禁要求真实运行时，工作流必须先准备运行时。");
   assert.match(workflow, /node scripts\/publish-release\.mjs --dir "\$RUNNER_TEMP\/moneypal-release"/u);
+  assert.match(workflow, /set -o pipefail/u, "管道必须保留发布脚本的退出码，不能用 tee 掩盖失败。");
   assert.doesNotMatch(workflow, /gh release create/u, "Release 由 Release Please 创建，不重复创建。");
   assert.doesNotMatch(workflow, /NPM_TOKEN/u, "npm 发布必须走 OIDC，不读取 NPM_TOKEN。");
   assert.doesNotMatch(workflow, /publish:dsh|publish:mcp/u, "发布必须复用已验收的 tgz，不重新构建。");

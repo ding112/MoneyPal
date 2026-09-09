@@ -166,7 +166,7 @@ test("第二个包发布失败时报错，重试只发布缺失包", async (t) =
   assert.deepEqual(publishedFiles(retry.calls), [`${names[1]}-${version}.tgz`]);
 });
 
-test("发布后复验最多重试三次、间隔两秒", async (t) => {
+test("发布后复验最多重试六次、间隔五秒", async (t) => {
   const { directory, root, bytes } = await fixture(t);
   const localIntegrity = tarballIntegrity(bytes.get(names[0])!);
 
@@ -176,7 +176,7 @@ test("发布后复验最多重试三次、间隔两秒", async (t) => {
   ]));
   const delayedResult = await publishRelease({ directory, root, exec: delayed.exec, sleep: delayed.sleep });
   assert.deepEqual(delayedResult.packages.map(({ status }) => status), ["published", "skipped"]);
-  assert.deepEqual(delayed.sleeps, [2000]);
+  assert.deepEqual(delayed.sleeps, [5000]);
   assert.equal(viewsFor(delayed.calls, names[0]), 3, "一次检查、一次未命中、一次命中。");
 
   const never = fakeNpm(new Map([
@@ -184,8 +184,11 @@ test("发布后复验最多重试三次、间隔两秒", async (t) => {
     [names[1], [exists(tarballIntegrity(bytes.get(names[1])!))]],
   ]));
   await assert.rejects(publishRelease({ directory, root, exec: never.exec, sleep: never.sleep }), /发布后复验失败/u);
-  assert.deepEqual(never.sleeps, [2000, 2000]);
-  assert.equal(viewsFor(never.calls, names[0]), 4, "复验读请求最多三次。");
+  assert.deepEqual(never.sleeps, [5000, 5000, 5000, 5000, 5000]);
+  assert.equal(viewsFor(never.calls, names[0]), 7, "复验读请求最多六次。");
+  for (const call of never.calls.filter((entry) => entry[1] === "view")) {
+    assert.ok(call.includes("--prefer-online"), "复验必须绕过本地缓存，避免读到发布前的 404。");
+  }
 });
 
 test("缺少已验收 tgz 时在调用 npm 之前失败", async (t) => {
