@@ -11,7 +11,8 @@ export class BalanceClientError extends Error {
 
 const OPEN_KEY = "dsh-moneypal.balance-open";
 const POLL_MS = 30_000;
-const COLD_RETRIES = [250, 500, 1_000];
+// 冷会话退避序列：调度近似值，未计 RPC 耗时；耗尽窗口约 1.6s，其后仅按 30s 轮询重探。
+const COLD_RETRIES = [100, 150, 250, 400, 700];
 
 /** 所有会话、轮询、取消与持久化规则都集中在此处；React 只订阅此状态。 */
 export class BalanceController {
@@ -23,6 +24,7 @@ export class BalanceController {
   #balanceRequest: AbortController | undefined;
   #coldAttempt = 0;
   #disposed = false;
+  #capabilityCache = new Map<string, Exclude<Capability, "unknown">>();
   #rpc: BalanceRpc; #now: () => Date; #visible: () => boolean; #schedule: (callback: () => void, ms: number) => ReturnType<typeof setTimeout>; #cancel: (timer: ReturnType<typeof setTimeout>) => void; #storage?: Pick<Storage, "getItem" | "setItem">;
 
   constructor(options: BalanceControllerOptions) {
@@ -34,8 +36,12 @@ export class BalanceController {
   async setSession(sessionId?: string): Promise<void> {
     if (sessionId === this.#state.sessionId) return;
     this.#cancelAll(); this.#coldAttempt = 0;
-    const open = this.#state.open;
-    this.#state = { sessionId, capability: sessionId ? "unknown" : "ordinary", open: sessionId ? open : false, stale: false, loading: Boolean(sessionId && open) };
+    // 已确认过的会话直接恢复缓存能力：candidate 让入口立即显示，ordinary 立即关闭抽屉；
+    // 打开偏好不在此处改写，随后的后台复探确认后按既有路径补开或纠正陈旧缓存。
+    const cached = sessionId ? this.#capabilityCache.get(sessionId) : undefined;
+    const capability = cached ?? (sessionId ? "unknown" : "ordinary");
+    const open = capability === "ordinary" ? false : this.#state.open;
+    this.#state = { sessionId, capability, open, stale: false, loading: Boolean(sessionId && open) };
     this.emit();
     if (sessionId && this.#visible()) await this.probe();
   }
@@ -48,10 +54,13 @@ export class BalanceController {
       const candidate = await this.#rpc.capability(sessionId, request.signal);
       if (!this.#currentProbe(sessionId, request)) return;
       this.#coldAttempt = 0;
+      this.#capabilityCache.set(sessionId, candidate ? "candidate" : "ordinary");
       const open = candidate && (this.#state.open || this.#readOpen());
       this.#state = candidate
         ? { ...this.#state, capability: "candidate", open, probeError: undefined, loading: open }
         : { ...this.#state, capability: "ordinary", open: false, snapshot: undefined, refreshedAt: undefined, error: undefined, probeError: undefined, stale: false, loading: false };
+      // 降级为普通时原子取消在途余额请求与刷新节奏：迟到的响应被身份校验丢弃，不得写回快照。
+      if (!candidate) { this.#abortBalance(); this.#cancelRefresh(); }
       this.emit();
       if (open) void this.refresh();
       this.#scheduleProbe(POLL_MS);

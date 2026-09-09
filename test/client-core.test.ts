@@ -113,3 +113,128 @@ test("切换会话后迟到的余额结果不得污染新会话", async () => {
   assert.equal(JSON.stringify(controller.state.snapshot).includes("旧会话"), false, "迟到的旧会话结果不得进入状态");
   controller.dispose();
 });
+
+test("冷会话按 100/150/250/400/700 退避重试，挂载完成后转入 30 秒轮询", async () => {
+  const timers: Array<{ callback: () => void; ms: number }> = []; let attempts = 0;
+  const snapshot = { asOf: "2026-08-27", assets: { accounts: [], totals: [] }, liabilities: { accounts: [], totals: [] } };
+  const controller = new BalanceController({ visible: () => true, schedule: (callback, ms) => { timers.push({ callback, ms }); return timers.length as unknown as ReturnType<typeof setTimeout>; }, cancel: () => undefined, rpc: {
+    capability: async () => { attempts += 1; if (attempts <= 5) throw new BalanceClientError("session_unavailable", "稍后重试"); return true; },
+    balances: async () => snapshot,
+  } });
+  await controller.setSession("cold");
+  assert.equal(controller.state.probeError, undefined, "快速退避期间不应提前呈现错误");
+  for (const delay of [100, 150, 250, 400, 700]) {
+    assert.equal(timers.at(-1)?.ms, delay);
+    timers.at(-1)?.callback(); await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(controller.state.probeError, undefined, "退避未耗尽时不应呈现错误");
+  }
+  assert.equal(attempts, 6, "前五次冷失败、第六次成功");
+  assert.equal(controller.state.capability, "candidate");
+  await controller.toggle(true);
+  assert.ok(controller.state.snapshot, "候选确认后应自动补拉余额");
+  assert.equal(timers.at(-1)?.ms, 30_000, "成功后应转入 30 秒轮询");
+  controller.dispose();
+});
+
+test("冷会话退避耗尽后呈现可重试状态并结束加载", async () => {
+  const backoff = [100, 150, 250, 400, 700];
+  const timers: Array<{ callback: () => void; ms: number }> = []; let attempts = 0;
+  const controller = new BalanceController({ visible: () => true, schedule: (callback, ms) => { timers.push({ callback, ms }); return timers.length as unknown as ReturnType<typeof setTimeout>; }, cancel: () => undefined, rpc: {
+    capability: async () => { attempts += 1; throw new BalanceClientError("session_unavailable", "稍后重试"); },
+    balances: async () => ({ asOf: "2026-08-27", assets: { accounts: [], totals: [] }, liabilities: { accounts: [], totals: [] } }),
+  } });
+  await controller.setSession("cold");
+  for (let index = 0; index < backoff.length - 1; index += 1) {
+    timers.at(-1)?.callback(); await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(controller.state.probeError, undefined, "退避未耗尽时不应呈现错误");
+  }
+  timers.at(-1)?.callback(); await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(attempts, backoff.length + 1);
+  assert.ok(controller.state.probeError, "退避耗尽后未呈现可重试状态");
+  assert.equal(controller.state.loading, false, "退避耗尽后应结束加载");
+  controller.dispose();
+});
+
+test("候选降级为普通时取消在途余额请求，迟到的结果不得写回快照", async () => {
+  let release!: (value: BalanceSnapshot | PromiseLike<BalanceSnapshot>) => void;
+  let candidate = true;
+  const snapshot = { asOf: "2026-08-27", assets: { accounts: [{ account: "Assets:C-现金", amounts: [{ commodity: "CNY", quantity: "1.00" }] }], totals: [] }, liabilities: { accounts: [], totals: [] } };
+  const controller = new BalanceController({ visible: () => true, rpc: {
+    capability: async () => candidate,
+    balances: async () => new Promise((resolve) => { release = resolve; }),
+  } });
+  await controller.setSession("s");
+  const pending = controller.toggle(true);
+  assert.equal(controller.state.loading, true, "余额请求在途时应处于加载状态");
+  candidate = false;
+  await controller.probe();
+  assert.equal(controller.state.capability, "ordinary");
+  assert.equal(controller.state.open, false, "降级后应关闭抽屉");
+  assert.equal(controller.state.loading, false, "降级后应结束加载");
+  release(snapshot);
+  await pending;
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(controller.state.snapshot, undefined, "迟到的余额结果不得写回已降级的会话");
+  controller.dispose();
+});
+
+test("会话能力缓存：切回已确认会话立即恢复能力并后台复探", async () => {
+  let probes = 0;
+  const snapshot = { asOf: "2026-08-27", assets: { accounts: [{ account: "Assets:C-现金", amounts: [{ commodity: "CNY", quantity: "1.00" }] }], totals: [] }, liabilities: { accounts: [], totals: [] } };
+  const controller = new BalanceController({ visible: () => true, rpc: {
+    capability: async () => { probes += 1; return true; },
+    balances: async () => snapshot,
+  } });
+  await controller.setSession("a");
+  await controller.setSession("b");
+  const switching = controller.setSession("a");
+  assert.equal(controller.state.capability, "candidate", "切回已确认会话应立即恢复缓存能力，入口可立即显示");
+  await switching;
+  assert.equal(controller.state.capability, "candidate");
+  assert.equal(probes, 3, "恢复缓存后仍应后台复探确认");
+  controller.dispose();
+});
+
+test("会话能力缓存：恢复普通会话立即关闭抽屉且不改写偏好，复探候选后按偏好补开", async () => {
+  const written: Array<[string, string]> = [];
+  const storage = { getItem: (key: string) => written.find(([name]) => name === key)?.[1] ?? null, setItem: (key: string, value: string) => { written.push([key, value]); } };
+  const snapshot = { asOf: "2026-08-27", assets: { accounts: [{ account: "Assets:C-现金", amounts: [{ commodity: "CNY", quantity: "1.00" }] }], totals: [] }, liabilities: { accounts: [], totals: [] } };
+  const controller = new BalanceController({ visible: () => true, storage, rpc: {
+    capability: async (id) => id !== "plain",
+    balances: async () => snapshot,
+  } });
+  await controller.setSession("ledger");
+  await controller.toggle(true);
+  await controller.setSession("plain");
+  assert.equal(controller.state.capability, "ordinary");
+  await controller.setSession("ledger");
+  assert.equal(controller.state.open, true, "复探候选后应按打开偏好补开抽屉");
+  const switching = controller.setSession("plain");
+  assert.equal(controller.state.capability, "ordinary", "恢复普通会话应立即呈现缓存能力");
+  assert.equal(controller.state.open, false, "恢复普通会话应立即关闭抽屉");
+  assert.equal(controller.state.loading, false);
+  await switching;
+  assert.deepEqual(written, [["dsh-moneypal.balance-open", "true"]], "恢复路径不得改写打开偏好");
+  controller.dispose();
+});
+
+test("会话能力缓存：缓存陈旧时由复探纠正为普通并清空快照", async () => {
+  let ledgerExists = true;
+  const snapshot = { asOf: "2026-08-27", assets: { accounts: [{ account: "Assets:C-现金", amounts: [{ commodity: "CNY", quantity: "1.00" }] }], totals: [] }, liabilities: { accounts: [], totals: [] } };
+  const controller = new BalanceController({ visible: () => true, rpc: {
+    capability: async (id) => id === "ledger" ? ledgerExists : true,
+    balances: async () => snapshot,
+  } });
+  await controller.setSession("ledger"); await controller.toggle(true);
+  assert.ok(controller.state.snapshot);
+  await controller.toggle(false);
+  ledgerExists = false;
+  await controller.setSession("other");
+  const switching = controller.setSession("ledger");
+  assert.equal(controller.state.capability, "candidate", "恢复时先呈现缓存能力");
+  await switching;
+  assert.equal(controller.state.capability, "ordinary", "复探应纠正陈旧缓存");
+  assert.equal(controller.state.snapshot, undefined, "纠正后应清空旧快照");
+  assert.equal(controller.state.open, false);
+  controller.dispose();
+});
