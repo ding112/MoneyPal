@@ -67,7 +67,7 @@ test("Release 工作流用 Release Please 驱动、OIDC 发布并保留手动 ta
   assert.match(workflow, /run: npm run test:release/u);
   assert.match(workflow, /run: npm run release:preflight/u);
   assert.match(workflow, /setup-runtime/u, "发布门禁要求真实运行时，工作流必须先准备运行时。");
-  assert.match(workflow, /node scripts\/publish-release\.mjs --dir "\$TARBALL_DIR"/u);
+  assert.match(workflow, /node scripts\/publish-release\.mjs --dir "\$RUNNER_TEMP\/moneypal-release"/u);
   assert.doesNotMatch(workflow, /gh release create/u, "Release 由 Release Please 创建，不重复创建。");
   assert.doesNotMatch(workflow, /NPM_TOKEN/u, "npm 发布必须走 OIDC，不读取 NPM_TOKEN。");
   assert.doesNotMatch(workflow, /publish:dsh|publish:mcp/u, "发布必须复用已验收的 tgz，不重新构建。");
@@ -77,4 +77,8 @@ test("Release 工作流用 Release Please 驱动、OIDC 发布并保留手动 ta
   const preflight = workflow.indexOf("npm run release:preflight");
   const publish = workflow.indexOf("publish-release.mjs");
   assert.ok(gate >= 0 && preflight > gate && publish > preflight, "发布必须排在门禁与预检之后。");
+
+  // job 级 env 不允许使用 runner 上下文，否则整个工作流启动失败。
+  const jobLevelRunnerEnv = workflow.split("\n").filter((line) => /^      [A-Z_]+: .*runner\./u.test(line));
+  assert.deepEqual(jobLevelRunnerEnv, [], "runner 上下文只能出现在 step 级 env。");
 });

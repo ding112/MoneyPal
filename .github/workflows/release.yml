@@ -24,9 +24,6 @@ jobs:
   release:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
-    env:
-      TARBALL_DIR: ${{ runner.temp }}/moneypal-release
-      PUBLISH_RESULT: ${{ runner.temp }}/publish-result.json
     steps:
       - name: Set up Node and npm registry
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
@@ -152,7 +149,7 @@ jobs:
       - name: Release gates and keep accepted tarballs
         if: steps.target.outputs.publish == 'true'
         env:
-          MONEYPAL_TARBALL_OUTPUT: ${{ env.TARBALL_DIR }}
+          MONEYPAL_TARBALL_OUTPUT: ${{ runner.temp }}/moneypal-release
         run: npm run test:release
 
       - name: Release preflight
@@ -161,12 +158,12 @@ jobs:
 
       - name: Publish accepted tarballs to npm next
         if: steps.target.outputs.publish == 'true'
-        run: node scripts/publish-release.mjs --dir "$TARBALL_DIR" | tee "$PUBLISH_RESULT"
+        run: node scripts/publish-release.mjs --dir "$RUNNER_TEMP/moneypal-release" | tee "$RUNNER_TEMP/publish-result.json"
 
       - name: Summarize release
         if: always()
         env:
-          RESULT_FILE: ${{ env.PUBLISH_RESULT }}
+          RESULT_FILE: ${{ runner.temp }}/publish-result.json
           RELEASE_VERSION: ${{ steps.target.outputs.version }}
           RELEASE_TAG: ${{ steps.target.outputs.tag }}
           RELEASE_SHA: ${{ steps.target.outputs.sha }}
