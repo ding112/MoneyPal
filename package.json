@@ -8,6 +8,7 @@
     "build": "node scripts/clean-build.mjs && tsc -p tsconfig.json && node scripts/copy-bridge.mjs && node scripts/build-client-bundle.mjs && node --check dist/src/client.bundle.cjs && node scripts/build-release-packages.mjs && node scripts/build-expert.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "install-preset": "node dist/src/main.js install-preset",
+    "uninstall-preset": "node dist/src/main.js uninstall-preset",
     "test:fast:built": "node --test dist/test/balance-host.test.js dist/test/batches.test.js dist/test/beancount-only-contract.test.js dist/test/client-ui.test.js dist/test/expert-package.test.js dist/test/init-ledger.test.js dist/test/install-preset.test.js dist/test/package-split.test.js dist/test/register-contract.test.js dist/test/release-gates.test.js dist/test/statements-contract.test.js",
     "test:fast": "npm run build && npm run test:fast:built",
     "test:integration:built": "node --test dist/test/*.test.js",

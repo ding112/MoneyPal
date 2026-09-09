@@ -189,13 +189,16 @@ dsh plugin --profile web add dsh-moneypal
 dsh plugin --profile web exec dsh-moneypal install-preset
 ```
 
-卸载时先关闭 DSH Web，再运行：
+卸载时先关闭 DSH Web，再按顺序运行：
 
 ```bash
+dsh plugin --profile web exec dsh-moneypal uninstall-preset
 dsh plugin --profile web remove dsh-moneypal
 ```
 
-该命令只移除 Web profile 中的 npm 包，不删除生成的预设。确认预设目录内的 `agent.cordis.yml` 包含 `# dsh-moneypal-managed: true` 后，将默认位置 `~/.dsh/.agent-presets/dsh-moneypal` 移到废纸篓；设置了自定义 `DSH_HOME` 时，使用其下的 `.agent-presets/dsh-moneypal`。重启 DSH Web 后，预设不应再出现。
+第一条命令只删除本插件生成的托管预设：执行前确认目录内的 `agent.cordis.yml` 含 `# dsh-moneypal-managed: true`，缺少标记时拒绝删除并提示人工处理；重复执行安全，预设不存在时只提示无需卸载。默认位置是 `~/.dsh/.agent-presets/dsh-moneypal`，设置了自定义 `DSH_HOME` 时使用其下的 `.agent-presets/dsh-moneypal`。第二条命令移除 Web profile 中的 npm 包；必须按此顺序执行，因为卸载命令本身来自该插件。重启 DSH Web 后预设不应再出现。共享 MoneyPal 运行时不会自动删除，需要清理时单独处理。
+
+如果插件包已被移除、无法再执行 `uninstall-preset`，请手动确认预设目录内的 `agent.cordis.yml` 包含上述标记后，删除 `<DSH_HOME>/.agent-presets/dsh-moneypal`（默认 `~/.dsh/.agent-presets/dsh-moneypal`）。
 
 ### WorkBuddy 与 MCP
 

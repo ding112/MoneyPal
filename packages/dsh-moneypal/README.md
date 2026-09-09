@@ -13,6 +13,17 @@ dsh plugin --profile web exec dsh-moneypal install-preset
 
 随后重启 DSH Web、硬刷新浏览器，并选择新生成的 `dsh-moneypal` 托管预设。
 
+## 卸载
+
+先关闭 DSH Web，再按顺序运行：
+
+```bash
+dsh plugin --profile web exec dsh-moneypal uninstall-preset
+dsh plugin --profile web remove dsh-moneypal
+```
+
+第一条命令只删除本插件生成的托管预设（`<DSH_HOME>/.agent-presets/dsh-moneypal`，默认 `~/.dsh/.agent-presets/dsh-moneypal`）：缺少 `# dsh-moneypal-managed: true` 标记时拒绝删除，重复执行安全。第二条命令移除 Web profile 中的 npm 包；顺序不能颠倒，因为卸载命令来自该插件。共享 MoneyPal 运行时不会被自动删除。
+
 ## 初始化账本
 
 ```bash

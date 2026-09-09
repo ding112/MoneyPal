@@ -2,7 +2,7 @@
 // bundle patch 以精确包根挂载；这些导出不是冗余的领域 API。
 export { apply, inject, name } from "./host.js";
 export { createConfirmedTransactionWriter } from "./finance/write.js";
-export { installPreset } from "./install-preset.js";
+export { installPreset, uninstallPreset } from "./install-preset.js";
 export { initializeLedger } from "./init-ledger.js";
 export { createLedgerEngine } from "./finance/engine.js";
 export { FinanceError } from "./finance/errors.js";

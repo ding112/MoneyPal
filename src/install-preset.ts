@@ -11,6 +11,15 @@ export interface InstallPresetOptions {
   packageName?: string;
 }
 
+export interface UninstallPresetOptions {
+  dshHome?: string;
+}
+
+export interface UninstallPresetResult {
+  presetPath: string;
+  removed: boolean;
+}
+
 export async function installPreset(options: InstallPresetOptions = {}): Promise<string> {
   const dshHome = resolve(options.dshHome ?? process.env.DSH_HOME ?? join(homedir(), ".dsh"));
   const packageName = options.packageName ?? await packageNameFromInstall();
@@ -32,6 +41,20 @@ export async function installPreset(options: InstallPresetOptions = {}): Promise
   const composition = join(target, "agent.cordis.yml");
   await writeFile(composition, `${await readFile(composition, "utf8").then(withoutTrailingNewlines)}\n\n${MANAGED_MARKER}\n- id: dsh-moneypal-time-context\n  name: "@deepseek-ai/dsh-time-context"\n  config:\n    timeZone: Asia/Shanghai\n- id: dsh-moneypal-readonly\n  name: "${packageName}/dsh"\n`, "utf8");
   return target;
+}
+
+// 卸载只针对托管预设本身：不查找 standard 预设（DSH 升级或缺失时仍可卸载），
+// 不删除 npm 包、共享运行时、账本或 MCP 配置。
+export async function uninstallPreset(options: UninstallPresetOptions = {}): Promise<UninstallPresetResult> {
+  const dshHome = resolve(options.dshHome ?? process.env.DSH_HOME ?? join(homedir(), ".dsh"));
+  const target = join(dshHome, ".agent-presets", PRESET_ID);
+  if (!(await exists(target))) return { presetPath: target, removed: false };
+  const composition = await safeRead(join(target, "agent.cordis.yml"));
+  if (!composition.includes(MANAGED_MARKER)) {
+    throw new Error(`预设 ${target} 不是本插件托管的预设（缺少托管标记）；卸载器不会删除它。请人工确认后再删除。`);
+  }
+  await rm(target, { recursive: true, force: true });
+  return { presetPath: target, removed: true };
 }
 
 async function packageNameFromInstall(): Promise<string> {

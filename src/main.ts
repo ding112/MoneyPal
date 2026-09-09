@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { installPreset } from "./install-preset.js";
+import { installPreset, uninstallPreset } from "./install-preset.js";
 import { initializeLedger } from "./init-ledger.js";
 import { inspectRuntime, setupRuntime } from "./finance/runtime.js";
 import { parseSetupArguments } from "./cli.js";
@@ -9,6 +9,11 @@ async function main(): Promise<void> {
   const [command, ...args] = process.argv.slice(2);
   if (command === "install-preset" && args.length === 0) {
     console.log(await installPreset());
+    return;
+  }
+  if (command === "uninstall-preset" && args.length === 0) {
+    const { presetPath, removed } = await uninstallPreset();
+    console.log(removed ? `已移除托管预设：${presetPath}` : `未找到托管预设，无需卸载：${presetPath}`);
     return;
   }
   if (command === "init" && args.length <= 1) {
@@ -24,7 +29,7 @@ async function main(): Promise<void> {
     console.log(JSON.stringify(await inspectRuntime(), null, 2));
     return;
   }
-  throw new Error("用法：dsh-moneypal <install-preset | init [账本工作区] | setup-runtime [--upgrade] | runtime-status>");
+  throw new Error("用法：dsh-moneypal <install-preset | uninstall-preset | init [账本工作区] | setup-runtime [--upgrade] | runtime-status>");
 }
 
 main().catch((error: unknown) => {
