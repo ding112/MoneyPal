@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { access, readFile } from "node:fs/promises";
+import { access, readFile, realpath } from "node:fs/promises";
+import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 
@@ -39,9 +40,11 @@ test("发布脚本默认把候选发到 next，绝不无标记覆盖 latest", as
 });
 
 test("发布包将公开 registry 与 next 固化为安全默认值", async () => {
-  for (const path of ["dsh-moneypal", "mcp-moneypal"]) {
-    const template = JSON.parse(await readFile(new URL(`../../packages/${path}/package.template.json`, import.meta.url), "utf8")) as { publishConfig?: unknown };
-    assert.deepEqual(template.publishConfig, {
+  // DSH 子包清单同时是市场目录的发现入口，因此用发布清单名；MCP 仍只有模板。
+  const manifests = { "dsh-moneypal": "package.json", "mcp-moneypal": "package.template.json" };
+  for (const [name, file] of Object.entries(manifests)) {
+    const manifest = JSON.parse(await readFile(new URL(`../../packages/${name}/${file}`, import.meta.url), "utf8")) as { publishConfig?: unknown };
+    assert.deepEqual(manifest.publishConfig, {
       registry: "https://registry.npmjs.org/",
       access: "public",
       tag: "next",
@@ -49,16 +52,18 @@ test("发布包将公开 registry 与 next 固化为安全默认值", async () =
   }
 });
 
-test("收录清单前置：根清单声明 dsh.bundle 且与 dsh 模板一致", async () => {
-  const packageJson = JSON.parse(await readFile(new URL("../../package.json", import.meta.url), "utf8")) as {
-    dsh?: { bundle?: { patch?: unknown } };
-  };
-  assert.equal(packageJson.dsh?.bundle?.patch, "./cordis.patch.yml");
+test("市场子包清单可发现且与根清单指向同一补丁", async () => {
+  const rootManifestPath = resolve(workspace, "package.json");
+  const subManifestPath = resolve(workspace, "packages", "dsh-moneypal", "package.json");
+  const rootManifest = await readJson(rootManifestPath);
+  const subManifest = await readJson(subManifestPath);
 
-  const template = JSON.parse(
-    await readFile(new URL("../../packages/dsh-moneypal/package.template.json", import.meta.url), "utf8"),
-  ) as { dsh?: { bundle?: { patch?: unknown } } };
-  assert.equal(template.dsh?.bundle?.patch, packageJson.dsh?.bundle?.patch);
+  assert.equal(subManifest.name, "dsh-moneypal", "市场目录探测器读取的子包清单必须声明包名 dsh-moneypal。");
+  assert.match(String(subManifest.repository?.url ?? ""), /github\.com\/ding112\/MoneyPal/u, "子包 repository.url 必须指回 ding112/MoneyPal 仓库。");
+  assert.equal(subManifest.dsh?.bundle?.patch, "./cordis.patch.yml", "子包补丁必须相对自身目录，发布包才能原样使用。");
 
-  await access(new URL("../../cordis.patch.yml", import.meta.url));
+  const rootPatch = resolve(dirname(rootManifestPath), String(rootManifest.dsh?.bundle?.patch ?? ""));
+  const subPatch = resolve(dirname(subManifestPath), String(subManifest.dsh?.bundle?.patch ?? ""));
+  await access(rootPatch);
+  assert.equal(await realpath(subPatch), await realpath(rootPatch), "根清单与子包清单的补丁必须指向同一真实文件。");
 });

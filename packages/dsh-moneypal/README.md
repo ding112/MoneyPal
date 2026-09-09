@@ -11,6 +11,8 @@ dsh plugin --profile web add dsh-moneypal
 dsh plugin --profile web exec dsh-moneypal install-preset
 ```
 
+在 `dsh-market` 中点击 MoneyPal 卡片安装的是 npm 已发布包 `dsh-moneypal`，版本跟随 registry 的 `latest` 标签。本目录（`packages/dsh-moneypal/`）供市场目录发现包名与 `cordis.patch.yml`，不是已构建的安装目录；从本地源码安装请先 `npm run build`，再安装 `dist/packages/dsh-moneypal`。
+
 随后重启 DSH Web、硬刷新浏览器，并选择新生成的 `dsh-moneypal` 托管预设。
 
 ## 卸载

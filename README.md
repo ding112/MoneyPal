@@ -36,6 +36,8 @@ dsh plugin --profile web add dsh-moneypal
 dsh plugin --profile web exec dsh-moneypal install-preset
 ```
 
+在 `dsh-market` 中点击 MoneyPal 卡片安装时，安装的是 npm 已发布包 `dsh-moneypal`，版本跟随 registry 的 `latest` 标签，不一定是仓库当前源码版本。仓库里的 `packages/dsh-moneypal/` 目录供市场目录发现包名与补丁，不是可直接安装的已构建目录。
+
 ### 2. 准备并检查运行时
 
 ```bash
@@ -316,6 +318,8 @@ dsh plugin --profile web exec dsh-moneypal install-preset
 ```
 
 安装包会向 Web profile 的全局 bundle 注册只读余额适配器；`install-preset` 生成 Agent 作用域的财务工具预设。随后按 DSH 快速开始准备运行时、连接账本。
+
+本地源码安装必须先构建，再安装构建产物目录 `dist/packages/dsh-moneypal`；仓库里的 `packages/dsh-moneypal/` 只是清单与补丁源，直接安装它不会得到可运行入口。
 
 本地开发 MCP 时，在前述宿主配置中把 `command` 改为 `node`，并将 `args` 设为 `["/path/to/moneypal-workspace/dist/packages/mcp-moneypal/dist/src/mcp-main.js"]`。
 

@@ -59,7 +59,7 @@ export async function uninstallPreset(options: UninstallPresetOptions = {}): Pro
 
 async function packageNameFromInstall(): Promise<string> {
   const packageFiles = [
-    new URL(`../../packages/${PRESET_ID}/package.template.json`, import.meta.url),
+    new URL(`../../packages/${PRESET_ID}/package.json`, import.meta.url),
     new URL("../../package.json", import.meta.url),
   ];
   const attempted: string[] = [];
@@ -69,10 +69,10 @@ async function packageNameFromInstall(): Promise<string> {
       const content = await readFile(packageFile, "utf8");
       const parsed = JSON.parse(content) as { name?: unknown; private?: unknown };
       // 只接受已发布形态的插件清单：工作区根清单是 private 的，名称不是插件包名，
-      // 即使模板缺失也不得把它的名字写进宿主预设（会引用不存在的 npm 包）。
+      // 即使子包清单缺失也不得把它的名字写进宿主预设（会引用不存在的 npm 包）。
       if (typeof parsed.name === "string" && parsed.name && parsed.private !== true) return parsed.name;
     } catch (error) {
-      // 发布包不包含 monorepo 模板（ENOENT 属预期，继续下一个候选）；
+      // 发布包不包含 monorepo 子包清单（ENOENT 属预期，继续下一个候选）；
       // 清单存在但损坏时直接失败，避免静默回退到错误名称。
       if (error instanceof Error && "code" in error && (error as { code?: string }).code === "ENOENT") continue;
       throw error;

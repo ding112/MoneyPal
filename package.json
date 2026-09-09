@@ -37,7 +37,7 @@
   },
   "dsh": {
     "bundle": {
-      "patch": "./cordis.patch.yml"
+      "patch": "./packages/dsh-moneypal/cordis.patch.yml"
     }
   },
   "packageManager": "npm@11.14.1"
