@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
-import { managedPresetPath, sharedStandardPreset, standardPreset } from "./preset-fixtures.js";
+import { agentPresetsStandardPreset, managedPresetPath, sharedStandardPreset, standardPreset } from "./preset-fixtures.js";
 
 type InstallPresetModule = typeof import("../src/install-preset.js");
 
@@ -57,4 +57,14 @@ test("安装器优先使用当前 Web profile 的 standard 预设", async () => 
   const preset = await readFile(join(home, ".agent-presets", "dsh-moneypal", "agent.cordis.yml"), "utf8");
   assert.match(preset, /name: web-standard/u);
   assert.doesNotMatch(preset, /name: shared-standard/u);
+});
+
+test("安装器兼容 dsh-agent-presets 提供的 standard 预设", async () => {
+  const home = join(root, "agent-presets-layout");
+  await agentPresetsStandardPreset(home);
+
+  await installPreset({ dshHome: home, packageName: "dsh-moneypal" });
+
+  const preset = await readFile(join(managedPresetPath(home), "agent.cordis.yml"), "utf8");
+  assert.match(preset, /name: agent-presets-standard/u);
 });

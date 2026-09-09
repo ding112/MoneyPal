@@ -1,6 +1,6 @@
-import { cp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { cp, mkdir, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const PRESET_ID = "dsh-moneypal";
@@ -62,11 +62,31 @@ async function findStandardPreset(dshHome: string): Promise<string> {
   const candidates = [
     join(dshHome, "profiles", "web", "node_modules", "@deepseek-ai", "dsh", "config", "agent-presets", "standard"),
     join(dshHome, "profiles", "node_modules", "@deepseek-ai", "dsh", "config", "agent-presets", "standard"),
+    join(dshHome, "profiles", "web", "node_modules", "@deepseek-ai", "dsh-agent-presets", "presets", "standard"),
+    join(dshHome, "profiles", "node_modules", "@deepseek-ai", "dsh-agent-presets", "presets", "standard"),
+    ...(await dshAgentPresetsCandidates()),
   ];
   for (const candidate of candidates) {
     if (await isDirectory(candidate)) return candidate;
   }
   throw new Error("未找到当前 DSH Web 的 standard 预设；请先运行 DSH Web，再执行 install-preset。");
+}
+
+async function dshAgentPresetsCandidates(): Promise<string[]> {
+  const candidates: string[] = [];
+  for (const directory of (process.env.PATH ?? "").split(delimiter)) {
+    for (const command of ["dsh", "dsh.cmd"]) {
+      const executable = join(directory, command);
+      try {
+        const resolved = await realpath(executable);
+        const dshRoot = dirname(dirname(resolved));
+        candidates.push(join(dshRoot, "node_modules", "@deepseek-ai", "dsh-agent-presets", "presets", "standard"));
+      } catch {
+        // PATH 中的其他目录或平台入口可能没有 dsh，继续检查下一个候选。
+      }
+    }
+  }
+  return candidates;
 }
 
 async function isDirectory(path: string): Promise<boolean> {

@@ -1,4 +1,4 @@
-import { cp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { chmod, cp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -19,6 +19,7 @@ async function buildDshPackage() {
   await removeStem(join(target, "dist", "src"), "mcp-main");
   await copy(join(workspace, "cordis.patch.yml"), join(target, "cordis.patch.yml"));
   await sanitizePublishedJavaScript(join(target, "dist", "src"));
+  await chmod(join(target, "dist", "src", "main.js"), 0o755);
 }
 
 async function buildMcpPackage() {
