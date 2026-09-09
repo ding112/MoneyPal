@@ -14,7 +14,7 @@
 - **结构化 UI 契约**：余额以 `BalanceSnapshot` 传输，React 直接渲染 DTO，不存在 Host HTML 或 `dangerouslySetInnerHTML`。[`src/balance.ts:8`](../../src/balance.ts#L8)
 - **工作区隔离**：Client 只传 `sessionId`；Host 只从 live session 的 `header.cwd` 取得权威工作区，并忽略客户端附加路径。[`src/host.ts:22`](../../src/host.ts#L22) [`test/balance-host.test.ts:34`](../../test/balance-host.test.ts#L34)
 - **精确金额**：金额跨边界保持十进制字符串，合计通过 `BigInt` 对齐小数位，不经过浮点数。[`src/balance.ts:41`](../../src/balance.ts#L41) [`test/balance-host.test.ts:144`](../../test/balance-host.test.ts#L144)
-- **状态竞争防护**：会话切换会取消旧请求，请求完成前复核 session 与 request identity；冷会话使用 250/500/1000ms 退避。[`src/client.ts:34`](../../src/client.ts#L34) [`src/client.ts:95`](../../src/client.ts#L95)
+- **状态竞争防护**：会话切换会取消旧请求，请求完成前复核 session 与 request identity；冷会话使用 100/150/250/400/700ms 退避。[`src/client.ts:34`](../../src/client.ts#L34) [`src/client.ts:95`](../../src/client.ts#L95)
 - **安全错误边界**：Host 返回稳定 code 与净化后的中文 message，日志不包含工作区、账本或异常正文。[`src/host.ts:34`](../../src/host.ts#L34) [`test/balance-host.test.ts:116`](../../test/balance-host.test.ts#L116)
 - **基础 a11y 完整**：已有 dialog label、Escape、焦点进入与恢复、Tab 循环、tabs 方向键/Home/End、负值非颜色提示。[`src/client.bundle.template.cjs:58`](../../src/client.bundle.template.cjs#L58)
 

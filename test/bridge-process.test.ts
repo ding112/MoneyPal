@@ -129,7 +129,8 @@ test("bridge 将净化后的账本诊断传递为稳定错误详情", async () =
 });
 
 test("bridge 在超时、取消和超限输出时终止并返回稳定错误", async () => {
-  const slow = await executable("slow", "sleep 2");
+  // 用 exec 让 shell 被 sleep 替换，SIGKILL 后管道立即关闭，终止原因不会被后续计时器覆盖。
+  const slow = await executable("slow", "exec sleep 2");
   await assert.rejects(invoke(slow, { timeoutMs: 20 }), (error: unknown) => error instanceof FinanceError && error.code === "operation_timeout");
 
   const controller = new AbortController();

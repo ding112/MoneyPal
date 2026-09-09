@@ -4,20 +4,23 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import { filesUnder } from "./release-utils.mjs";
+import { exportTarballs, filesUnder, integrity } from "./release-utils.mjs";
 
 const exec = promisify(execFile);
 const root = fileURLToPath(new URL("..", import.meta.url));
 const packages = ["dsh-moneypal", "mcp-moneypal"];
 const rootPackage = JSON.parse(await readFile(join(root, "package.json"), "utf8"));
 const expectedVersion = rootPackage.version;
+const output = process.env.MONEYPAL_TARBALL_OUTPUT;
 assert(typeof expectedVersion === "string" && expectedVersion.length > 0, "package.json 必须提供非空 version。");
 const temporary = await mkdtemp(join(tmpdir(), "moneypal-tarballs-"));
 
 try {
   const packed = await Promise.all(packages.map(pack));
   for (const item of packed) await audit(item);
-  console.log(JSON.stringify({ ok: true, version: expectedVersion, packages: packed.map(({ name, tarball, files }) => ({ name, tarball, files })) }, null, 2));
+  for (const item of packed) item.integrity = integrity(await readFile(item.tarball));
+  if (output) await exportTarballs(packed, output);
+  console.log(JSON.stringify({ ok: true, version: expectedVersion, output: output ?? null, packages: packed.map(({ name, tarball, files, integrity: sha512 }) => ({ name, tarball, files, integrity: sha512 })) }, null, 2));
 } finally {
   await rm(temporary, { recursive: true, force: true });
 }

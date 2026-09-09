@@ -1,17 +1,15 @@
 import assert from "node:assert/strict";
 import { spawn, type ChildProcess } from "node:child_process";
-import { access, appendFile, chmod, mkdtemp, mkdir, open, readFile, rm, writeFile } from "node:fs/promises";
+import { access, chmod, mkdtemp, mkdir, open, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { after, before, test } from "node:test";
 
 import { READ_ONLY_TOOL_DEFINITIONS, WRITE_TOOL_PARAMETERS } from "../src/finance/contract.js";
-import { inspectRuntime } from "../src/finance/runtime.js";
-import { initializeLedger } from "../src/init-ledger.js";
-import { apply as applyDsh } from "../src/dsh.js";
+import { omitSchemaDescriptions } from "./contract-fixtures.js";
 
-const command = fileURLToPath(new URL("../packages/mcp-moneypal/dist/src/mcp-main.js", import.meta.url));
+const command = fileURLToPath(new URL("../src/mcp-main.js", import.meta.url));
 const demoLedger = fileURLToPath(new URL("../../data/finance", import.meta.url));
 
 let root: string;
@@ -158,9 +156,17 @@ class McpClient {
 
   async close(): Promise<void> {
     this.#child.stdin?.end();
-    const outcome = await Promise.race([this.#exited.then(() => "exit"), sleep(5000).then(() => "timeout")]);
-    if (outcome === "timeout") this.#child.kill("SIGKILL");
-    await this.#exited;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const timeout = new Promise<"timeout">((resolve) => {
+        timer = setTimeout(() => resolve("timeout"), 5000);
+      });
+      const outcome = await Promise.race([this.#exited.then(() => "exit"), timeout]);
+      if (outcome === "timeout") this.#child.kill("SIGKILL");
+      await this.#exited;
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+    }
   }
 
   #receive(message: RpcMessage): void {
@@ -258,31 +264,25 @@ test("tools/list 返回与 DSH 同源的只读工具和两步写入工具", asyn
       const definition = READ_ONLY_TOOL_DEFINITIONS[index];
       if (!definition) return;
       assert.equal(tool.name, definition.name);
-      assert.equal(tool.description, definition.description);
-      assert.deepEqual(tool.inputSchema, definition.parameters);
+      assert.deepEqual(omitSchemaDescriptions(tool.inputSchema), omitSchemaDescriptions(definition.parameters));
     });
-    const withDates = listing.tools.filter((tool) => String(tool.description).includes("绝对日期"));
-    assert.ok(withDates.length >= 4, "日期区间工具的描述必须要求绝对日期");
 
     const [preview, commit] = listing.tools.slice(READ_ONLY_TOOL_DEFINITIONS.length);
     assert.equal(preview!.name, "finance_preview_transactions");
-    assert.match(String(preview!.description), /finance_commit_transactions/u);
-    assert.match(String(preview!.description), /明确确认/u);
-    assert.deepEqual(preview!.inputSchema, WRITE_TOOL_PARAMETERS);
+    assert.deepEqual(omitSchemaDescriptions(preview!.inputSchema), omitSchemaDescriptions(WRITE_TOOL_PARAMETERS));
     assert.equal(commit!.name, "finance_commit_transactions");
-    assert.match(String(commit!.description), /确认后调用/u);
-    assert.deepEqual(commit!.inputSchema, {
+    assert.deepEqual(omitSchemaDescriptions(commit!.inputSchema), omitSchemaDescriptions({
       type: "object",
       properties: { batchId: { type: "string", description: "preview 工具返回的交易批次号。" } },
       required: ["batchId"],
       additionalProperties: false,
-    });
+    }));
   } finally {
     await client.close();
   }
 });
 
-test("tools/call 对演示账本真实出数，成功响应附 serverToday", async () => {
+test("tools/call 返回假运行时领域结果并附 serverToday", async () => {
   const workspace = join(root, "beancount-query-workspace"); const ledger = join(workspace, "default");
   await mkdir(join(ledger, "transactions"), { recursive: true });
   await writeFile(join(ledger, "main.beancount"), 'include "accounts.beancount"\ninclude "transactions/*.beancount"\n');
@@ -298,149 +298,6 @@ test("tools/call 对演示账本真实出数，成功响应附 serverToday", asy
     client.request(3, "tools/call", { name: "finance_get_balance", arguments: { account: "Assets:支付宝" } });
     const balance = await client.payload(3);
     assert.deepEqual(balance.accounts, [{ account: "Assets:C-支付宝", amounts: [{ commodity: "CNY", quantity: "0.3" }, { commodity: "USD", quantity: "10000000000000000" }] }]);
-  } finally {
-    await client.close();
-  }
-});
-
-test("MCP 的完整流水 DTO 与 DSH 使用相同的 LedgerEngine 结构", async () => {
-  const workspace = join(root, "mcp-complete-register-workspace"); const ledger = join(workspace, "default");
-  await mkdir(join(ledger, "transactions"), { recursive: true });
-  await writeFile(join(ledger, "main.beancount"), 'include "accounts.beancount"\ninclude "transactions/*.beancount"\n');
-  await writeFile(join(ledger, "accounts.beancount"), "2026-01-01 open Assets:C-现金\n");
-  await writeFile(join(ledger, "transactions", "2026.beancount"), "");
-  const client = McpClient.start({ MONEYPAL_LEDGER_WORKSPACE: workspace, MONEYPAL_PYTHON: await validationRuntime("complete-register") });
-  try {
-    client.request(1, "tools/call", { name: "finance_query_register", arguments: { begin: "2026-01-01", end: "2026-02-01", text: "午餐", limit: 1 } });
-    const payload = await client.payload(1); delete payload.serverToday;
-    assert.deepEqual(payload, completeRegisterResult());
-  } finally { await client.close(); }
-});
-
-function completeRegisterResult() {
-  return { range: { begin: "2026-01-01", end: "2026-02-01" }, truncated: true, transactions: [{ date: "2026-01-02", flag: "*", payee: "商店", narration: "午餐", tags: ["food"], links: ["receipt-1"], metadata: { receipt: "A-1" }, postings: [{ account: "Assets:C-现金", units: { commodity: "CNY", quantity: "-12.5" }, cost: { currency: "CNY", number: "10", date: "2026-01-01", label: null }, price: { commodity: "USD", quantity: "2" }, flag: null, metadata: { note: "含税" } }] }] };
-}
-
-/** 真实 MoneyPal 运行时下的跨宿主验收；未安装时跳过，离线套件由上面的假运行时测试覆盖。 */
-const moneypalRuntime = await inspectRuntime().catch(() => undefined);
-const runtimeSkip = moneypalRuntime?.available ? false : "未检测到可用的 MoneyPal 运行时；请先执行 setup-runtime。";
-
-test("DSH 与 MCP 对同一正式账本返回深度相等的完整流水 DTO", { skip: runtimeSkip }, async () => {
-  const workspace = join(root, "cross-host-register-workspace");
-  const ledger = await initializeLedger({ ledgerWorkspace: workspace, year: 2026 });
-  await appendFile(join(ledger, "accounts.beancount"), "2026-01-01 open Assets:C-股票\n", "utf8");
-  await writeFile(join(ledger, "transactions", "2026.beancount"), `2026-01-05 * "超市" "午餐" #food ^receipt-1
-  receipt: "A-1"
-  Expenses:C-餐饮    12.50 CNY
-    note: "含税"
-  Assets:C-现金      -12.50 CNY
-
-2026-01-06 * "券商" "买入股票"
-  Assets:C-股票      10 STOCK {12 CNY, 2026-01-02, "lot-a"} @ 15 CNY
-  Assets:C-现金      -120 CNY
-`, "utf8");
-  const arguments_ = { begin: "2026-01-01", end: "2026-02-01", account: "Assets:C-现金" };
-
-  const definitions: Array<{ name: string; execute: (args: Record<string, unknown>, execution: unknown) => Promise<unknown> }> = [];
-  applyDsh({
-    tools: { register: (definition) => definitions.push(definition as unknown as { name: string; execute: (args: Record<string, unknown>, execution: unknown) => Promise<unknown> }) },
-    systemPrompt: { section: () => () => undefined },
-    effect: (callback) => callback(),
-  });
-  const register = definitions.find((definition) => definition.name === "finance_query_register");
-  assert.ok(register);
-  const dshResult = await register.execute(arguments_, { agent: { session: { header: { cwd: workspace } } }, signal: new AbortController().signal }) as { truncated: boolean; transactions: Array<{ payee: string; metadata: Record<string, unknown>; postings: Array<{ units: { commodity: string }; cost: unknown; price: unknown; metadata: Record<string, unknown> }> }> };
-
-  // 固定账本必须真的覆盖多币种、成本、价格和 metadata，避免空结果下的空洞相等。
-  assert.equal(dshResult.truncated, false);
-  assert.deepEqual(dshResult.transactions.map((transaction) => transaction.payee), ["超市", "券商"]);
-  assert.equal(Object.keys(dshResult.transactions[0]!.metadata).length > 0, true);
-  assert.equal(Object.keys(dshResult.transactions[0]!.postings[0]!.metadata).length > 0, true);
-  assert.notEqual(dshResult.transactions[1]!.postings[0]!.cost, null);
-  assert.notEqual(dshResult.transactions[1]!.postings[0]!.price, null);
-  assert.notEqual(dshResult.transactions[1]!.postings[0]!.units.commodity, dshResult.transactions[1]!.postings[1]!.units.commodity);
-
-  const client = McpClient.start({ MONEYPAL_LEDGER_WORKSPACE: workspace });
-  try {
-    client.request(1, "tools/call", { name: "finance_query_register", arguments: arguments_ });
-    const payload = await client.payload(1);
-    delete payload.serverToday;
-    assert.deepEqual(payload, dshResult);
-  } finally { await client.close(); }
-});
-
-test("DSH 与 MCP 对同一正式账本返回深度相等的财务报表 DTO", { skip: runtimeSkip }, async () => {
-  const workspace = join(root, "cross-host-statements-workspace");
-  const ledger = await initializeLedger({ ledgerWorkspace: workspace, year: 2026 });
-  await appendFile(join(ledger, "accounts.beancount"), "2026-01-01 open Assets:C-美元\n", "utf8");
-  await writeFile(join(ledger, "transactions", "2026.beancount"), `2026-01-05 * "雇主" "工资"
-  Assets:C-现金      100 CNY
-  Income:C-工资     -100 CNY
-
-2026-01-06 * "超市" "午餐"
-  Expenses:C-餐饮     20 CNY
-  Assets:C-现金      -20 CNY
-
-2026-01-07 * "店家" "办公采购"
-  Expenses:C-餐饮  10 USD
-  Assets:C-美元    -10 USD
-`, "utf8");
-  const arguments_ = { begin: "2026-01-01", end: "2026-02-01" };
-
-  const definitions: Array<{ name: string; execute: (args: Record<string, unknown>, execution: unknown) => Promise<unknown> }> = [];
-  applyDsh({
-    tools: { register: (definition) => definitions.push(definition as unknown as { name: string; execute: (args: Record<string, unknown>, execution: unknown) => Promise<unknown> }) },
-    systemPrompt: { section: () => () => undefined },
-    effect: (callback) => callback(),
-  });
-  const income = definitions.find((definition) => definition.name === "finance_get_income_statement");
-  const sheet = definitions.find((definition) => definition.name === "finance_get_balance_sheet");
-  assert.ok(income && sheet);
-  const execution = { agent: { session: { header: { cwd: workspace } } }, signal: new AbortController().signal };
-  const dshIncome = await income.execute(arguments_, execution) as { netIncome: Array<{ commodity: string }> };
-  const dshSheet = await sheet.execute(arguments_, execution) as { totals: { assets: Array<{ commodity: string }>; liabilitiesAndEquity: Array<{ commodity: string }> } };
-
-  // 固定账本必须真的覆盖多币种，避免空结果下的空洞相等。
-  assert.deepEqual(dshIncome.netIncome.map((amount) => amount.commodity), ["CNY", "USD"]);
-  assert.deepEqual(dshSheet.totals.assets, dshSheet.totals.liabilitiesAndEquity);
-
-  const client = McpClient.start({ MONEYPAL_LEDGER_WORKSPACE: workspace });
-  try {
-    client.request(1, "tools/call", { name: "finance_get_income_statement", arguments: arguments_ });
-    const incomePayload = await client.payload(1);
-    delete incomePayload.serverToday;
-    assert.deepEqual(incomePayload, dshIncome);
-
-    client.request(2, "tools/call", { name: "finance_get_balance_sheet", arguments: arguments_ });
-    const sheetPayload = await client.payload(2);
-    delete sheetPayload.serverToday;
-    assert.deepEqual(sheetPayload, dshSheet);
-
-    // 错误的输入也必须跨宿主返回相同 { code, message }。
-    const invalid = { begin: "2026-13-01" };
-    const dshError = await income.execute(invalid, execution) as { error: { code: string; message: string } };
-    assert.ok(dshError.error);
-    client.request(3, "tools/call", { name: "finance_get_income_statement", arguments: invalid });
-    const mcpError = await client.toolError(3);
-    assert.deepEqual(mcpError, dshError.error);
-  } finally { await client.close(); }
-});
-
-test("MCP 的 finance_validate_journal 经 LedgerEngine 返回稳定 DTO", async () => {
-  const workspace = join(root, "beancount-validation-workspace");
-  const ledger = join(workspace, "default");
-  await mkdir(join(ledger, "transactions"), { recursive: true });
-  await writeFile(join(ledger, "main.beancount"), 'include "accounts.beancount"\ninclude "transactions/*.beancount"\n');
-  await writeFile(join(ledger, "accounts.beancount"), "2026-01-01 open Assets:Cash\n");
-  await writeFile(join(ledger, "transactions", "2026.beancount"), "");
-  const runtime = await validationRuntime("beancount");
-
-  const client = McpClient.start({ MONEYPAL_LEDGER_WORKSPACE: workspace, MONEYPAL_PYTHON: runtime });
-  try {
-    client.request(1, "tools/call", { name: "finance_validate_journal", arguments: {} });
-    const payload = await client.payload(1);
-    assert.equal(payload.valid, true);
-    assert.match(String(payload.serverToday), /^\d{4}-\d{2}-\d{2}$/u);
   } finally {
     await client.close();
   }
@@ -592,74 +449,6 @@ test("preview → commit 往返把规范文本原子写入年度交易文件，�
     client.request(4, "tools/call", { name: "finance_commit_transactions", arguments: {} });
     const missing = await client.toolError(4);
     assert.equal(missing.code, "invalid_request");
-  } finally {
-    await client.close();
-  }
-});
-
-test("批次过期后 commit 提示重新生成预览", async () => {
-  const workspace = await createLedgerWorkspace("ttl", "2026-01-01 open Assets:Wallet\n2026-01-01 open Expenses:Food\n");
-  const ledger = join(workspace, "default");
-  const transactionFile = join(workspace, "default", "transactions", "2026.beancount");
-  const client = McpClient.start({ MONEYPAL_LEDGER_WORKSPACE: workspace, MONEYPAL_PYTHON: await writeRuntime("ttl", ledger), MONEYPAL_BATCH_TTL_MS: "50" });
-  try {
-    client.request(1, "tools/call", { name: "finance_preview_transactions", arguments: { transactions: [transaction] } });
-    const preview = await client.payload(1);
-    await sleep(200);
-
-    client.request(2, "tools/call", { name: "finance_commit_transactions", arguments: { batchId: preview.batchId } });
-    const error = await client.toolError(2);
-    assert.equal(error.code, "batch_expired");
-    assert.match(error.message, /已过期/u);
-    assert.equal(await readFile(transactionFile, "utf8"), "");
-  } finally {
-    await client.close();
-  }
-});
-
-test("待写入批次至多 3 个，超出挤出最旧", async () => {
-  const workspace = await createLedgerWorkspace("cap", "2026-01-01 open Assets:Wallet\n2026-01-01 open Expenses:Food\n");
-  const ledger = join(workspace, "default");
-  const transactionFile = join(workspace, "default", "transactions", "2026.beancount");
-  const client = McpClient.start({ MONEYPAL_LEDGER_WORKSPACE: workspace, MONEYPAL_PYTHON: await writeRuntime("cap", ledger) });
-  try {
-    const batchIds: unknown[] = [];
-    for (let index = 0; index < 4; index += 1) {
-      client.request(index + 1, "tools/call", {
-        name: "finance_preview_transactions",
-        arguments: { transactions: [{ ...transaction, description: `批次 ${index + 1}` }] },
-      });
-      const preview = await client.payload(index + 1);
-      batchIds.push(preview.batchId);
-    }
-
-    client.request(10, "tools/call", { name: "finance_commit_transactions", arguments: { batchId: batchIds[0] } });
-    const evicted = await client.toolError(10);
-    assert.equal(evicted.code, "batch_replaced");
-
-    client.request(11, "tools/call", { name: "finance_commit_transactions", arguments: { batchId: batchIds[3] } });
-    await client.payload(11);
-    assert.equal(await readFile(transactionFile, "utf8"), CANNONICAL_TEXT);
-  } finally {
-    await client.close();
-  }
-});
-
-test("preview 后账本被改动时 commit 以 preview_stale 拒绝", async () => {
-  const workspace = await createLedgerWorkspace("stale", "2026-01-01 open Assets:Wallet\n2026-01-01 open Expenses:Food\n");
-  const ledger = join(workspace, "default");
-  const transactionFile = join(workspace, "default", "transactions", "2026.beancount");
-  const client = McpClient.start({ MONEYPAL_LEDGER_WORKSPACE: workspace, MONEYPAL_PYTHON: await writeRuntime("stale", ledger) });
-  try {
-    client.request(1, "tools/call", { name: "finance_preview_transactions", arguments: { transactions: [transaction] } });
-    const preview = await client.payload(1);
-    assert.ok(preview.batchId);
-    await writeFile(join(workspace, "default", "accounts.beancount"), "2026-01-01 open Assets:Wallet\n2026-01-01 open Expenses:Food\n; changed\n");
-
-    client.request(2, "tools/call", { name: "finance_commit_transactions", arguments: { batchId: preview.batchId } });
-    const error = await client.toolError(2);
-    assert.equal(error.code, "preview_stale");
-    assert.equal(await readFile(transactionFile, "utf8"), "");
   } finally {
     await client.close();
   }

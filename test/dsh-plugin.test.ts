@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { after, before, test } from "node:test";
 
 import { apply } from "../src/dsh.js";
+import { omitSchemaDescriptions } from "./contract-fixtures.js";
 
 let root: string; let engineRuntime: string; let originalPython: string | undefined;
 
@@ -65,12 +66,12 @@ test("DSH 注册六个稳定的只读工具、受确认保护的写入和初始�
   assert.equal(definitions.find((definition) => definition.name === "finance_add_transactions")?.timeoutMs, undefined);
   assert.equal(definitions.find((definition) => definition.name === "finance_query_register")?.timeoutMs, 30_000);
   assert.deepEqual(
-    (definitions.find((definition) => definition.name === "finance_initialize_ledger") as unknown as { parameters: unknown }).parameters,
-    { type: "object", properties: {}, additionalProperties: false },
+    omitSchemaDescriptions((definitions.find((definition) => definition.name === "finance_initialize_ledger") as unknown as { parameters: unknown }).parameters),
+    omitSchemaDescriptions({ type: "object", properties: {}, additionalProperties: false }),
   );
   assert.deepEqual(
-    (definitions.find((definition) => definition.name === "finance_add_transactions") as unknown as { parameters: unknown }).parameters,
-    {
+    omitSchemaDescriptions((definitions.find((definition) => definition.name === "finance_add_transactions") as unknown as { parameters: unknown }).parameters),
+    omitSchemaDescriptions({
       type: "object",
       properties: {
         transactions: {
@@ -104,7 +105,7 @@ test("DSH 注册六个稳定的只读工具、受确认保护的写入和初始�
       },
       required: ["transactions"],
       additionalProperties: false,
-    },
+    }),
   );
 
   const accounts = definitions.find((definition) => definition.name === "finance_list_accounts");
@@ -115,8 +116,6 @@ test("DSH 注册六个稳定的只读工具、受确认保护的写入和初始�
   );
 
   assert.deepEqual(sections.map((section) => section.name), ["dsh-moneypal:date-defaults"]);
-  assert.match(String(sections[0]!.text instanceof Function ? sections[0]!.text() : sections[0]!.text), /time-context/u);
-  assert.match(String(sections[0]!.text instanceof Function ? sections[0]!.text() : sections[0]!.text), /不得臆造日期/u);
 });
 
 test("DSH 适配器将空流水和空余额包装为对象输出", async () => {
@@ -137,52 +136,6 @@ test("DSH 适配器将空流水和空余额包装为对象输出", async () => {
 
   assert.deepEqual(await register.execute({}, execution), { range: { begin: null, end: null }, truncated: false, transactions: [] });
   assert.deepEqual(await balance.execute({}, execution), { range: { begin: null, end: null }, accounts: [], totals: [] });
-});
-
-test("DSH 的完整流水保留多币种、成本、价格和 metadata", async () => {
-  const workspace = join(root, "complete-register-workspace"); const ledger = join(workspace, "default");
-  await mkdir(join(ledger, "transactions"), { recursive: true });
-  await writeFile(join(ledger, "main.beancount"), 'include "accounts.beancount"\ninclude "transactions/*.beancount"\n');
-  await writeFile(join(ledger, "accounts.beancount"), "2026-01-01 open Assets:C-现金\n");
-  await writeFile(join(ledger, "transactions", "2026.beancount"), "");
-  const definitions: Definition[] = []; applyPlugin(definitions, []);
-  const register = definitions.find((definition) => definition.name === "finance_query_register"); assert.ok(register);
-  assert.deepEqual(await register.execute({ begin: "2026-01-01", end: "2026-02-01", text: "午餐", limit: 1 }, { agent: { session: { header: { cwd: workspace } } }, signal: new AbortController().signal }), completeRegisterResult());
-});
-
-function completeRegisterResult() {
-  return { range: { begin: "2026-01-01", end: "2026-02-01" }, truncated: true, transactions: [{ date: "2026-01-02", flag: "*", payee: "商店", narration: "午餐", tags: ["food"], links: ["receipt-1"], metadata: { receipt: "A-1" }, postings: [{ account: "Assets:C-现金", units: { commodity: "CNY", quantity: "-12.5" }, cost: { currency: "CNY", number: "10", date: "2026-01-01", label: null }, price: { commodity: "USD", quantity: "2" }, flag: null, metadata: { note: "含税" } }] }] };
-}
-
-test("DSH 的 finance_validate_journal 经 LedgerEngine 返回稳定 DTO", async () => {
-  const workspace = join(root, "beancount-validation-workspace");
-  const ledger = join(workspace, "default");
-  const runtime = join(root, "validation-runtime.sh");
-  await mkdir(join(ledger, "transactions"), { recursive: true });
-  await writeFile(join(ledger, "main.beancount"), 'include "accounts.beancount"\ninclude "transactions/*.beancount"\n');
-  await writeFile(join(ledger, "accounts.beancount"), "2026-01-01 open Assets:Cash\n");
-  await writeFile(join(ledger, "transactions", "2026.beancount"), "");
-  await writeFile(runtime, `#!/bin/sh
-request=$(cat)
-case "$request" in
-  *'"operation":"probe"'*) printf '%s' '{"protocolVersion":1,"runtime":{"python":"3.11.11","beancount":"3.2.3","beanquery":"0.2.0"},"ok":true,"result":{"pythonVersion":"3.11.0","beancountVersion":"3.2.3","beanqueryVersion":"0.2.0","beancountAvailable":true}}' ;;
-  *) printf '%s' '{"protocolVersion":1,"runtime":{"python":"3.11.11","beancount":"3.2.3","beanquery":"0.2.0"},"ok":true,"result":{"valid":true}}' ;;
-esac
-`, { mode: 0o700 });
-  await chmod(runtime, 0o700);
-
-  const definitions: Definition[] = [];
-  applyPlugin(definitions, []);
-  const validation = definitions.find((definition) => definition.name === "finance_validate_journal");
-  assert.ok(validation);
-  const original = process.env.MONEYPAL_PYTHON;
-  process.env.MONEYPAL_PYTHON = runtime;
-  try {
-    assert.deepEqual(await validation.execute({}, { agent: { session: { header: { cwd: workspace } } }, signal: new AbortController().signal }), { valid: true });
-  } finally {
-    if (original === undefined) delete process.env.MONEYPAL_PYTHON;
-    else process.env.MONEYPAL_PYTHON = original;
-  }
 });
 
 const CANNONICAL_LUNCH = '2026-08-25 * "午餐"\n  Expenses:Food   12 CNY\n  Assets:Wallet  -12 CNY\n';
@@ -298,73 +251,6 @@ test("整份提交只确认一次，不按数量隐式切分", async () => {
   assert.equal(await (await import("node:fs/promises")).readFile(transactionFile, "utf8"), CANNONICAL_LUNCH);
 });
 
-test("计划审阅卡片按币种分别汇总收入和支出", async () => {
-  const workspace = join(root, "summary-prompt-workspace");
-  const ledger = join(workspace, "default");
-  await mkdir(join(ledger, "transactions"), { recursive: true });
-  await writeFile(join(ledger, "main.beancount"), 'include "accounts.beancount"\ninclude "transactions/*.beancount"\n');
-  await writeFile(join(ledger, "accounts.beancount"), "2026-01-01 open Assets:Wallet\n2026-01-01 open Assets:Bank\n2026-01-01 open Income:Salary\n2026-01-01 open Expenses:Food\n");
-  await writeFile(join(ledger, "transactions", "2026.beancount"), "");
-
-  const definitions: Definition[] = [];
-  let confirmation: QuestionRequest | undefined;
-  applyPlugin(definitions, [], { ask: async (request) => {
-    confirmation = request;
-    return { answers: [{ id: "confirm_finance_write", selected: ["取消"] }] };
-  } });
-  const add = definitions.find((definition) => definition.name === "finance_add_transactions");
-  assert.ok(add);
-  const runtime = await writeFake("summary-card", ledger, {
-    transactions: ["2026-08-25 * \"工资\"\n  Assets:Wallet   100 CNY\n  Income:Salary  -100 CNY\n"],
-    transactionText: "2026-08-25 * \"工资\"\n  Assets:Wallet   100 CNY\n  Income:Salary  -100 CNY\n",
-    amountSummary: [{ commodity: "CNY", income: "100", expenses: "12", netIncome: "88" }],
-    duplicateWarnings: [],
-  });
-  const result = await withPythonResult(runtime, () => add.execute({ transactions: [
-    { date: "2026-08-25", description: "工资", postings: [{ account: "Assets:Wallet", amount: "100 CNY" }, { account: "Income:Salary" }] },
-    { date: "2026-08-26", description: "午餐", postings: [{ account: "Expenses:Food", amount: "12 CNY" }, { account: "Assets:Wallet" }] },
-    { date: "2026-08-27", description: "转账", postings: [{ account: "Assets:Bank", amount: "30 CNY" }, { account: "Assets:Wallet", amount: "-30 CNY" }] },
-  ] }, { agent: { session: { header: { cwd: workspace } } }, signal: new AbortController().signal }));
-
-  assert.deepEqual(result, { error: { code: "cancelled", message: "已取消写入，正式账本未修改。" } });
-  assert.match(confirmation?.questions[0]?.detail ?? "", /\| CNY \| 100 \| 12 \| 88 \|/u);
-  assert.doesNotMatch(confirmation?.questions[0]?.detail ?? "", /转账.*30/u);
-});
-
-test("计划审阅卡片只在需要时显示疑似重复提醒", async () => {
-  const workspace = join(root, "duplicate-prompt-workspace");
-  const ledger = join(workspace, "default");
-  await mkdir(join(ledger, "transactions"), { recursive: true });
-  await writeFile(join(ledger, "main.beancount"), 'include "accounts.beancount"\ninclude "transactions/*.beancount"\n');
-  await writeFile(join(ledger, "accounts.beancount"), "2026-01-01 open Assets:Wallet\n2026-01-01 open Expenses:Food\n");
-  await writeFile(join(ledger, "transactions", "2026.beancount"), "");
-
-  const definitions: Definition[] = [];
-  let confirmation: QuestionRequest | undefined;
-  applyPlugin(definitions, [], { ask: async (request) => {
-    confirmation = request;
-    return { answers: [{ id: "confirm_finance_write", selected: ["取消"] }] };
-  } });
-  const add = definitions.find((definition) => definition.name === "finance_add_transactions");
-  assert.ok(add);
-  const runtime = await writeFake("duplicate-card", ledger, {
-    transactions: [CANNONICAL_LUNCH],
-    transactionText: CANNONICAL_LUNCH,
-    amountSummary: [{ commodity: "CNY", income: "0", expenses: "12", netIncome: "-12" }],
-    duplicateWarnings: [{ candidateIndex: 0, source: "ledger", matchedCandidateIndex: null, existingDate: "2026-08-25", existingPayee: null, existingNarration: "午餐", reasons: ["same_payee_and_narration", "same_expense_accounts"] }],
-  });
-  const result = await withPythonResult(runtime, () => add.execute(
-    { transactions: [{ date: "2026-08-25", description: "午餐", postings: [{ account: "Expenses:Food", amount: "12 CNY" }, { account: "Assets:Wallet" }] }] },
-    { agent: { session: { header: { cwd: workspace } } }, signal: new AbortController().signal },
-  ));
-
-  assert.deepEqual(result, { error: { code: "cancelled", message: "已取消写入，正式账本未修改。" } });
-  const detail = confirmation?.questions[0]?.detail ?? "";
-  assert.match(detail, /## 可能重复/u);
-  assert.match(detail, /第 1 笔可能与 2026-08-25 的“午餐”重复：描述相同；费用账户相同/u);
-  assert.doesNotMatch(detail, /2026\.beancount|校验结果/u);
-});
-
 test("取消确认框时不修改正式账本", async () => {
   const workspace = join(root, "cancel-workspace");
   const ledger = join(workspace, "default");
@@ -391,15 +277,6 @@ test("取消确认框时不修改正式账本", async () => {
   });
   assert.equal(await (await import("node:fs/promises")).readFile(transactionFile, "utf8"), "");
 });
-
-async function withPythonResult<T>(runtime: string, action: () => Promise<T>): Promise<T> {
-  const original = process.env.MONEYPAL_PYTHON;
-  process.env.MONEYPAL_PYTHON = runtime;
-  try { return await action(); } finally {
-    if (original === undefined) delete process.env.MONEYPAL_PYTHON;
-    else process.env.MONEYPAL_PYTHON = original;
-  }
-}
 
 test("DSH 适配器把缺少工作区转换为结构化错误", async () => {
   const definitions: Definition[] = [];

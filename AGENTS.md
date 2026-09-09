@@ -21,3 +21,7 @@ Issue 和 spec 使用本仓库 `.scratch/` 下的 Markdown 文件管理。详见
 ### 端到端测试
 
 端到端测试统一使用 `ego-browser` skill，不得自行改用其他浏览器自动化方案。执行前先读取该 skill：`~/.agents/skills/ego-browser/SKILL.md`。
+
+### 测试撰写标准
+
+新增、修改或删除测试前，必须先读取 `docs/agents/dsh-plugin-development.md` 的“测试撰写标准”章节，按准入条件选择测试层级并检查已有覆盖。
