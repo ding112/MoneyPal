@@ -1,0 +1,92 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: release-main
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout tagged source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Node and npm registry
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org/
+          package-manager-cache: false
+
+      - name: Install npm per packageManager
+        run: npm install -g npm@11.14.1
+
+      - name: Verify tag and source
+        env:
+          RELEASE_REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+          tag="${RELEASE_REF#refs/tags/}"
+          version="${tag#v}"
+          TAG="$tag" node -e '
+            const tag = process.env.TAG ?? "";
+            if (!/^v\d+\.\d+\.\d+(?:-rc\.\d+)?$/u.test(tag)) {
+              console.log(`::error::只接受 vX.Y.Z 或 vX.Y.Z-rc.N 形式的 tag，当前为 ${tag}。`);
+              process.exit(1);
+            }
+          '
+          head_sha="$(git rev-parse HEAD)"
+          tag_sha="$(git rev-parse "$tag^{commit}")"
+          if [ "$tag_sha" != "$head_sha" ]; then
+            echo "::error::tag $tag 解析出的提交 $tag_sha 与本次事件提交 $head_sha 不一致。"
+            exit 1
+          fi
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor "$head_sha" origin/main; then
+            echo "::error::提交 $head_sha 不在 main 历史中，拒绝发布。"
+            exit 1
+          fi
+          root_version="$(node -p 'require("./package.json").version')"
+          lock_version="$(node -p 'require("./package-lock.json").version')"
+          lock_root_version="$(node -p 'require("./package-lock.json").packages[""].version')"
+          if [ "$root_version" != "$version" ]; then
+            echo "::error::根清单版本 $root_version 与 tag 版本 $version 不一致。"
+            exit 1
+          fi
+          if [ "$lock_version" != "$version" ] || [ "$lock_root_version" != "$version" ]; then
+            echo "::error::package-lock.json 版本（$lock_version / $lock_root_version）与 tag 版本 $version 不一致。"
+            exit 1
+          fi
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build once
+        run: npm run build
+
+      - name: Prepare MoneyPal runtime
+        run: node dist/src/main.js setup-runtime
+
+      - name: Release gates and keep accepted tarballs
+        env:
+          MONEYPAL_TARBALL_OUTPUT: ${{ runner.temp }}/moneypal-release
+        run: npm run verify:release:built
+
+      - name: Release preflight
+        run: npm run release:preflight
+
+      - name: Publish accepted tarballs to npm next
+        run: node scripts/publish-release.mjs --dir "$RUNNER_TEMP/moneypal-release"

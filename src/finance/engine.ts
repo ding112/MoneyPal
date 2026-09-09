@@ -47,7 +47,7 @@ export async function runBridge<T>(options: BridgeProcessOptions, operation: Bri
   try { return await new Promise<T>((resolvePromise, rejectPromise) => {
     const child = spawn(options.pythonExecutable, ["-I", "-X", "utf8", bridge], { shell: false, stdio: ["pipe", "pipe", "pipe"] });
     let stdout = ""; let bytes = 0; let finished = false; let reason: FinanceError | undefined;
-    const terminate = (error: FinanceError) => { reason = error; child.kill("SIGKILL"); };
+    const terminate = (error: FinanceError) => { if (reason) return; reason = error; child.kill("SIGKILL"); };
     const collect = (chunk: Buffer) => { bytes += chunk.byteLength; if (bytes > options.maxResultBytes) terminate(new FinanceError("result_too_large", "账本操作结果超过大小限制；请缩小查询范围后重试。")); };
     const abort = () => terminate(new FinanceError("cancelled", "账本操作已取消。"));
     const timer = setTimeout(() => terminate(new FinanceError("operation_timeout", "账本操作超时；请缩小查询范围后重试。")), options.operationTimeoutMs);
@@ -80,6 +80,9 @@ export async function runBridge<T>(options: BridgeProcessOptions, operation: Bri
       return;
     }
     signal?.addEventListener("abort", abort, { once: true });
+    // 子进程可能在请求写入前就退出（缺少依赖、立即崩溃或已被终止）；写入失败由 close 事件统一决定结果，
+    // 不能让 stdin 的 EPIPE 变成未捕获异常。
+    child.stdin.on("error", () => { /* 结果由 close 事件决定 */ });
     child.stdin.end(request);
   }); } finally { await release?.release(); }
 }

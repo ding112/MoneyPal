@@ -97,6 +97,9 @@
 - 本地集成（`npm test`）允许明确跳过缺失真实运行时的 18 项；发布（`npm run test:release`）严格要求真实运行时可用兼容。
 - 发布 UI 验收只在发布前通过 ego-browser skill 执行；日常测试不包含 React/DOM 模拟器或浏览器测试。
 - `npm run test:fast`、`npm test`、`npm run test:release` 三个命令相互包含，不要用它们重复验证同一次修改：按所处阶段选择相应的最高层级即可；单独诊断失败文件时不受此限制。
+- `npm run test:release` 只完整构建一次，随后执行 `npm run verify:release:built`（发布测试 + 真实 tarball 打包、内容检查、隔离安装与入口加载）。`verify:release:built` 自身不构建、不安装运行时，要求调用方已完成 `npm run build` 与 `node dist/src/main.js setup-runtime`；`pack:check` 与 `pack:check:built` 只作手工排查，不在正式验收链路里。
+- 版本改动经过审查：维护者用 `npm version <明确版本> --no-git-tag-version` 更新根版本（该命令只改根清单与 lockfile，不提交、不打 tag），审查差异后经 PR 合入 `main`，再对已合入的提交创建 annotated tag 并只推送该 tag（`git push origin refs/tags/v<版本>`）；不要用 `git push --tags`，也不要在 CI 里升版本。
+- Release 工作流只接受 `push.tags: ['v*']`，发布已经通过门禁的 tgz（`scripts/publish-release.mjs`），npm 使用 OIDC 发布到 `next` 且不读取 `NPM_TOKEN`，`latest` 保持人工提升；不要新增工作流、绕过门禁或在发布流程里改动 dist-tag。Test 与 Release 工作流都会执行 `npm ci` → `npm run build`（每个 job 只完整构建一次）→ `node dist/src/main.js setup-runtime` → `npm run verify:release:built`，因为发布门禁严格要求真实运行时。发布失败时在新 tag 工作流的原运行中选择 **Re-run failed jobs**，不重新推送、删除或移动 tag。
 
 ### 发布 UI 验收清单（仅发布前执行）
 

@@ -109,7 +109,7 @@ Host 的成功值类型是 `unknown`；Client 有一套 `BalanceRpc` TypeScript 
 
 余额规格仍保留迁移前的 `default/main.journal`、hledger、`/hledger-agent`、大小写不敏感根账户和 `{mantissa, decimalPlaces}`；当前代码实际是 `main.beancount`、Beancount bridge、`/dsh-moneypal`、大小写精确 `Assets/Liabilities` 和 `{commodity, quantity}`。[`.scratch/account-balance-drawer/spec.md:71`](../../.scratch/account-balance-drawer/spec.md#L71) [`src/host.ts:22`](../../src/host.ts#L22) [`src/balance.ts:25`](../../src/balance.ts#L25) [`src/finance/bridge.py:132`](../../src/finance/bridge.py#L132)
 
-应先更新规格，再新增实现 ticket，否则后续 Agent 会按旧公开契约开发。Client manifest 中的注入包名也应在每个目标 DSH 版本做真实 loader 验证，而不是只检查 JSON 字段存在。[`packages/dsh-moneypal/package.template.json:36`](../../packages/dsh-moneypal/package.template.json#L36) [`test/balance-host.test.ts:49`](../../test/balance-host.test.ts#L49)
+应先更新规格，再新增实现 ticket，否则后续 Agent 会按旧公开契约开发。Client manifest 中的注入包名也应在每个目标 DSH 版本做真实 loader 验证，而不是只检查 JSON 字段存在。[`packages/dsh-moneypal/package.json:36`](../../packages/dsh-moneypal/package.json#L36) [`test/balance-host.test.ts:49`](../../test/balance-host.test.ts#L49)
 
 ## 推荐实施顺序
 

@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
-import { installPreset } from "../src/install-preset.js";
-import { managedPresetPath, sharedStandardPreset, standardPreset } from "./preset-fixtures.js";
+import { installPreset, uninstallPreset } from "../src/install-preset.js";
+import { agentPresetsStandardPreset, managedPresetPath, sharedStandardPreset, standardPreset } from "./preset-fixtures.js";
 
 let root: string;
 
@@ -51,4 +51,42 @@ test("安装器优先使用当前 Web profile 的 standard 预设", async () => 
   const preset = await readFile(join(home, ".agent-presets", "dsh-moneypal", "agent.cordis.yml"), "utf8");
   assert.match(preset, /name: web-standard/u);
   assert.doesNotMatch(preset, /name: shared-standard/u);
+});
+
+test("安装器兼容 dsh-agent-presets 提供的 standard 预设", async () => {
+  const home = join(root, "agent-presets-layout");
+  await agentPresetsStandardPreset(home);
+
+  await installPreset({ dshHome: home, packageName: "dsh-moneypal" });
+
+  const preset = await readFile(join(managedPresetPath(home), "agent.cordis.yml"), "utf8");
+  assert.match(preset, /name: agent-presets-standard/u);
+});
+
+test("卸载器移除托管预设，并在重复执行时保持幂等", async () => {
+  const home = join(root, "uninstall");
+  await standardPreset(home);
+  await installPreset({ dshHome: home });
+  await access(join(managedPresetPath(home), "agent.cordis.yml"));
+
+  assert.deepEqual(await uninstallPreset({ dshHome: home }), { presetPath: managedPresetPath(home), removed: true });
+  await assert.rejects(access(managedPresetPath(home)));
+
+  assert.deepEqual(await uninstallPreset({ dshHome: home }), { presetPath: managedPresetPath(home), removed: false });
+});
+
+test("卸载器拒绝删除没有托管标记的同名预设", async () => {
+  const home = join(root, "uninstall-collision");
+  const target = managedPresetPath(home);
+  await mkdir(target, { recursive: true });
+  await writeFile(join(target, "agent.cordis.yml"), "- id: user\n  name: user-plugin\n");
+
+  await assert.rejects(uninstallPreset({ dshHome: home }), /不会删除/u);
+  assert.equal(await readFile(join(target, "agent.cordis.yml"), "utf8"), "- id: user\n  name: user-plugin\n");
+});
+
+test("未安装托管预设时卸载不报错", async () => {
+  const home = join(root, "uninstall-absent");
+
+  assert.deepEqual(await uninstallPreset({ dshHome: home }), { presetPath: managedPresetPath(home), removed: false });
 });

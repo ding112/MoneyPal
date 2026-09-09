@@ -19,6 +19,15 @@ export async function sharedStandardPreset(home: string, marker: string): Promis
   return standard;
 }
 
+// DSH 0.1.2-rc.1 的标准预设随 dsh-agent-presets 发布，不再位于 dsh/config 下。
+export async function agentPresetsStandardPreset(home: string, profile = "web", marker = "agent-presets-standard"): Promise<string> {
+  const standard = join(home, "profiles", profile, "node_modules", "@deepseek-ai", "dsh-agent-presets", "presets", "standard");
+  await mkdir(standard, { recursive: true });
+  await writeFile(join(standard, "preset.yml"), "name: 标准模式\n");
+  await writeFile(join(standard, "agent.cordis.yml"), `- id: standard\n  name: ${marker}\n`);
+  return standard;
+}
+
 export function managedPresetPath(home: string): string {
   return join(home, ".agent-presets", "dsh-moneypal");
 }

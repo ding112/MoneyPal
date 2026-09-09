@@ -69,7 +69,7 @@ test("Qoder 插件清单满足必填字段与路径规则", async () => {
   assert.equal(typeof qoder.description, "string");
   assert.ok(qoder.description.length > 0, "description 必填。");
   assert.equal(qoder.displayName, "恰恰账本");
-  assert.deepEqual(qoder.author, { name: "mengzai", email: "hz_dyl112@163.com" });
+  assert.deepEqual(qoder.author, { name: "mengzai", email: "dev_mengzai@163.com" });
   assert.equal(qoder.skills, "./skills");
   assert.deepEqual(qoder.agents, ["./agents/moneypal.md"]);
   assert.equal(qoder.mcpServers, "./.mcp.json");

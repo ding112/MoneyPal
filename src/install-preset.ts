@@ -1,6 +1,6 @@
-import { cp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { cp, mkdir, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const PRESET_ID = "dsh-moneypal";
@@ -9,6 +9,15 @@ const MANAGED_MARKER = "# dsh-moneypal-managed: true";
 export interface InstallPresetOptions {
   dshHome?: string;
   packageName?: string;
+}
+
+export interface UninstallPresetOptions {
+  dshHome?: string;
+}
+
+export interface UninstallPresetResult {
+  presetPath: string;
+  removed: boolean;
 }
 
 export async function installPreset(options: InstallPresetOptions = {}): Promise<string> {
@@ -34,9 +43,23 @@ export async function installPreset(options: InstallPresetOptions = {}): Promise
   return target;
 }
 
+// 卸载只针对托管预设本身：不查找 standard 预设（DSH 升级或缺失时仍可卸载），
+// 不删除 npm 包、共享运行时、账本或 MCP 配置。
+export async function uninstallPreset(options: UninstallPresetOptions = {}): Promise<UninstallPresetResult> {
+  const dshHome = resolve(options.dshHome ?? process.env.DSH_HOME ?? join(homedir(), ".dsh"));
+  const target = join(dshHome, ".agent-presets", PRESET_ID);
+  if (!(await exists(target))) return { presetPath: target, removed: false };
+  const composition = await safeRead(join(target, "agent.cordis.yml"));
+  if (!composition.includes(MANAGED_MARKER)) {
+    throw new Error(`预设 ${target} 不是本插件托管的预设（缺少托管标记）；卸载器不会删除它。请人工确认后再删除。`);
+  }
+  await rm(target, { recursive: true, force: true });
+  return { presetPath: target, removed: true };
+}
+
 async function packageNameFromInstall(): Promise<string> {
   const packageFiles = [
-    new URL(`../../packages/${PRESET_ID}/package.template.json`, import.meta.url),
+    new URL(`../../packages/${PRESET_ID}/package.json`, import.meta.url),
     new URL("../../package.json", import.meta.url),
   ];
   const attempted: string[] = [];
@@ -46,10 +69,10 @@ async function packageNameFromInstall(): Promise<string> {
       const content = await readFile(packageFile, "utf8");
       const parsed = JSON.parse(content) as { name?: unknown; private?: unknown };
       // 只接受已发布形态的插件清单：工作区根清单是 private 的，名称不是插件包名，
-      // 即使模板缺失也不得把它的名字写进宿主预设（会引用不存在的 npm 包）。
+      // 即使子包清单缺失也不得把它的名字写进宿主预设（会引用不存在的 npm 包）。
       if (typeof parsed.name === "string" && parsed.name && parsed.private !== true) return parsed.name;
     } catch (error) {
-      // 发布包不包含 monorepo 模板（ENOENT 属预期，继续下一个候选）；
+      // 发布包不包含 monorepo 子包清单（ENOENT 属预期，继续下一个候选）；
       // 清单存在但损坏时直接失败，避免静默回退到错误名称。
       if (error instanceof Error && "code" in error && (error as { code?: string }).code === "ENOENT") continue;
       throw error;
@@ -62,11 +85,31 @@ async function findStandardPreset(dshHome: string): Promise<string> {
   const candidates = [
     join(dshHome, "profiles", "web", "node_modules", "@deepseek-ai", "dsh", "config", "agent-presets", "standard"),
     join(dshHome, "profiles", "node_modules", "@deepseek-ai", "dsh", "config", "agent-presets", "standard"),
+    join(dshHome, "profiles", "web", "node_modules", "@deepseek-ai", "dsh-agent-presets", "presets", "standard"),
+    join(dshHome, "profiles", "node_modules", "@deepseek-ai", "dsh-agent-presets", "presets", "standard"),
+    ...(await dshAgentPresetsCandidates()),
   ];
   for (const candidate of candidates) {
     if (await isDirectory(candidate)) return candidate;
   }
   throw new Error("未找到当前 DSH Web 的 standard 预设；请先运行 DSH Web，再执行 install-preset。");
+}
+
+async function dshAgentPresetsCandidates(): Promise<string[]> {
+  const candidates: string[] = [];
+  for (const directory of (process.env.PATH ?? "").split(delimiter)) {
+    for (const command of ["dsh", "dsh.cmd"]) {
+      const executable = join(directory, command);
+      try {
+        const resolved = await realpath(executable);
+        const dshRoot = dirname(dirname(resolved));
+        candidates.push(join(dshRoot, "node_modules", "@deepseek-ai", "dsh-agent-presets", "presets", "standard"));
+      } catch {
+        // PATH 中的其他目录或平台入口可能没有 dsh，继续检查下一个候选。
+      }
+    }
+  }
+  return candidates;
 }
 
 async function isDirectory(path: string): Promise<boolean> {

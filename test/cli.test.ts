@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -74,6 +74,54 @@ test("本地 CLI 安装预设时使用 DSH 包名而非根工作区包名", asyn
     const preset = await readFile(join(managedPresetPath(root), "agent.cordis.yml"), "utf8");
     assert.match(preset, /name: "dsh-moneypal\/dsh"/u);
     assert.doesNotMatch(preset, /name: "moneypal-workspace\/dsh"/u);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("DSH CLI 用法列出卸载命令并拒绝多余参数", async () => {
+  await assert.rejects(
+    execute(process.execPath, [dshCommand, "uninstall-preset", "extra"]),
+    (error: unknown) => error instanceof Error
+      && "stderr" in error
+      && typeof error.stderr === "string"
+      && /用法：dsh-moneypal <install-preset \| uninstall-preset/u.test(error.stderr),
+  );
+});
+
+test("CLI uninstall-preset 移除托管预设并可重复执行", async () => {
+  const root = await mkdtemp(join(tmpdir(), "moneypal-cli-uninstall-preset-"));
+  try {
+    await standardPreset(root);
+    const env = { ...process.env, DSH_HOME: root };
+    await execute(process.execPath, [dshCommand, "install-preset"], { env });
+
+    const removed = await execute(process.execPath, [dshCommand, "uninstall-preset"], { env });
+    assert.match(removed.stdout, /已移除托管预设/u);
+    await assert.rejects(access(managedPresetPath(root)));
+
+    const again = await execute(process.execPath, [dshCommand, "uninstall-preset"], { env });
+    assert.match(again.stdout, /无需卸载/u);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("CLI uninstall-preset 拒绝删除没有托管标记的预设", async () => {
+  const root = await mkdtemp(join(tmpdir(), "moneypal-cli-uninstall-collision-"));
+  try {
+    const target = managedPresetPath(root);
+    await mkdir(target, { recursive: true });
+    await writeFile(join(target, "agent.cordis.yml"), "- id: user\n  name: user-plugin\n");
+
+    await assert.rejects(
+      execute(process.execPath, [dshCommand, "uninstall-preset"], { env: { ...process.env, DSH_HOME: root } }),
+      (error: unknown) => error instanceof Error
+        && "stderr" in error
+        && typeof error.stderr === "string"
+        && /不会删除/u.test(error.stderr),
+    );
+    assert.equal(await readFile(join(target, "agent.cordis.yml"), "utf8"), "- id: user\n  name: user-plugin\n");
   } finally {
     await rm(root, { recursive: true, force: true });
   }
