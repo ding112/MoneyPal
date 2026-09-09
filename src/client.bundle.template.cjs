@@ -1,7 +1,7 @@
 /* DSH Web lazy CommonJS 工厂（A 方案：概览/明细双页签）。
  * 分层：文案与 locale 注册 → 展示组件（纯函数，状态与文案经 props 注入）→ 样式安装 → DSH 接入（apply）。
  * 业务状态仍由编译后的 BalanceController 单点管理；样式来自 src/client.css。
- * 文案注册到宿主 LocaleRuntime（@deepseek-ai/dsh-client-locale 0.1.1-rc.2 已核验：
+ * 文案注册到宿主 LocaleRuntime（@deepseek-ai/dsh-client-locale 0.1.2-rc.1 已核验：
  * ctx.provide("locale")、register(ns, {zh, en}) 返回 disposer、bind(ns) 返回实时翻译函数、
  * 查找链 ns → common → key；locale id 仅 zh/en，zh 为 key 基准）。 */
 window.__ModuleLoader__.load({ id: "dsh-moneypal", factory: (require) => {
@@ -11,7 +11,6 @@ window.__ModuleLoader__.load({ id: "dsh-moneypal", factory: (require) => {
   /* ═══ 文案：单一来源字典，注册到宿主 locale 命名空间，跟随宿主语言切换 ═══ */
   const LOCALE_NS = "dsh-moneypal.balance";
   const ZH = {
-    "entry.label": "余额",
     "entry.aria": "查看账户余额",
     "drawer.title": "账户余额",
     "drawer.asOf": "截至 {date}",
@@ -27,8 +26,7 @@ window.__ModuleLoader__.load({ id: "dsh-moneypal", factory: (require) => {
     "total.assets": "资产合计",
     "total.liabilities": "负债合计",
     "overview.list": "账户一览",
-    "overview.listCount": "共 {count} 个",
-    "overview.jump": "查看全部账户明细",
+    "overview.jump": "查看全部 {count} 个账户",
     "overview.caption": "不同币种分别列示，不进行折算。",
     "debt.displayNote": "按欠款金额展示",
     "debt.overpaid": "{count} 个账户存在溢缴款",
@@ -37,23 +35,26 @@ window.__ModuleLoader__.load({ id: "dsh-moneypal", factory: (require) => {
     "loading.note": "正在读取账户余额…",
     "empty.title": "暂无账户余额",
     "empty.description": "当前账本没有非零的资产或负债余额。",
+    "ordinary.title": "尚未发现账本",
+    "ordinary.description": "当前会话工作区尚未发现 MoneyPal 账本。准备好账本后可重试。",
     "error.title": "暂时无法读取余额",
-    "error.fallback": "请检查账本状态，然后重新读取。",
+    "error.fallback": "请检查账本状态，然后刷新余额。",
     "action.refresh": "刷新余额",
-    "action.reread": "重新读取",
     "action.retry": "重试",
     "banner.failedWithTime": "刷新失败，显示 {time} 的余额",
     "banner.failedNoTime": "刷新失败，显示的余额可能已过期。",
     "banner.pending": "余额可能已过期，正在获取最新数据。",
+    "status.refreshFailed": "刷新失败",
     "status.refreshing": "正在刷新…",
+    "status.refreshComplete": "余额已更新",
     "status.waitingLedger": "等待账本响应",
-    "status.waitingBalance": "等待余额",
+    "status.stale": "余额待更新",
+    "status.noData": "暂无余额数据",
     "status.autoRefresh": "每 30 秒自动刷新",
     "status.updatedAt": "{time} 更新",
     "status.lastSuccess": "上次成功 {time}",
   };
   const EN = {
-    "entry.label": "Balances",
     "entry.aria": "View account balances",
     "drawer.title": "Account Balances",
     "drawer.asOf": "As of {date}",
@@ -65,31 +66,34 @@ window.__ModuleLoader__.load({ id: "dsh-moneypal", factory: (require) => {
     "tab.details": "Details",
     "group.assets": "Assets",
     "group.liabilities": "Liabilities",
-    "group.count": "{count} accounts",
+    "group.count": "Accounts: {count}",
     "total.assets": "Total assets",
     "total.liabilities": "Total liabilities",
     "overview.list": "Accounts",
-    "overview.listCount": "{count} total",
-    "overview.jump": "View all account details",
+    "overview.jump": "View account details ({count})",
     "overview.caption": "Commodities are listed separately and never converted.",
     "debt.displayNote": "Shown as amounts owed",
-    "debt.overpaid": "{count} accounts have overpayments",
+    "debt.overpaid": "Accounts with overpayments: {count}",
     "warn.overdrawn": "Overdrawn",
     "warn.overpaid": "Overpaid · refund due",
     "loading.note": "Reading account balances…",
     "empty.title": "No account balances",
     "empty.description": "The current ledger has no non-zero asset or liability balances.",
+    "ordinary.title": "No ledger found",
+    "ordinary.description": "No MoneyPal ledger was found in the current session workspace. Retry once it is ready.",
     "error.title": "Balances unavailable",
-    "error.fallback": "Check the ledger state, then read again.",
+    "error.fallback": "Check the ledger state, then refresh balances.",
     "action.refresh": "Refresh balances",
-    "action.reread": "Read again",
     "action.retry": "Retry",
     "banner.failedWithTime": "Refresh failed, showing balances from {time}",
     "banner.failedNoTime": "Refresh failed, the balances shown may be outdated.",
     "banner.pending": "Balances may be outdated; fetching the latest data.",
+    "status.refreshFailed": "Refresh failed",
     "status.refreshing": "Refreshing…",
+    "status.refreshComplete": "Balances updated",
     "status.waitingLedger": "Waiting for the ledger",
-    "status.waitingBalance": "Waiting for balances",
+    "status.stale": "Balances need updating",
+    "status.noData": "No balance data",
     "status.autoRefresh": "Auto-refreshes every 30 s",
     "status.updatedAt": "Updated {time}",
     "status.lastSuccess": "Last success {time}",
@@ -116,25 +120,49 @@ window.__ModuleLoader__.load({ id: "dsh-moneypal", factory: (require) => {
   /* ═══ 展示组件：纯函数；不读取模块状态，state/t/回调全部经 props 注入 ═══ */
   const NS = "dsh-moneypal-balance"; const STYLE_ID = `${NS}-style`; const TITLE_ID = `${NS}-title`;
   const DRAWER_ID = `${NS}-drawer`; const TAB_PREFIX = `${NS}-tab`; const PANEL_ID = `${NS}-panel`;
+  const ENTRY_ID = `${NS}-entry`;
+  // 会话 preset 的匹配 ID：大小写精确匹配；preset 来源为会话列表项的 agentPreset 投影值（null=未组合视为未确定）。
+  const MONEYPAL_PRESET = "dsh-moneypal";
+  const selectSessionId = (sessions) => sessions.current;
+  const selectPreset = (sessions) => {
+    const entry = sessions.current ? sessions.byId[sessions.current] : undefined;
+    const preset = entry?.projectionValues?.agentPreset;
+    return typeof preset === "string" ? preset : undefined;
+  };
   const TABS = [["overview", "tab.overview"], ["details", "tab.details"]];
   const COMPACT_QUERY = "(max-width: 767px)";
   const cls = (...parts) => parts.filter(Boolean).map((part) => `${NS}-${part}`).join(" ");
-  const fmtClock = (ms) => new Date(ms).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
-  const fmtAsOf = (asOf) => asOf.replaceAll("-", ".");
+  // 展示格式跟随宿主 locale；时钟保留浏览器本地时区。
+  const fmtClock = (ms, locale = "zh-CN") => new Intl.DateTimeFormat(locale, { hour: "2-digit", minute: "2-digit" }).format(new Date(ms));
+  // 截至日期按 YYYY-MM-DD 拆分后以 UTC 构造并固定 timeZone: "UTC"，本地时区偏移不得使日期跨天；
+  // setUTCFullYear 避免 Date 构造器对 0–99 年的 1900 基准特殊处理。
+  const fmtAsOf = (asOf, locale = "zh-CN") => {
+    const [year, month, day] = asOf.split("-");
+    if (!year || !month || !day) return asOf;
+    const date = new Date(0);
+    date.setUTCFullYear(Number(year), Number(month) - 1, Number(day));
+    return new Intl.DateTimeFormat(locale, { year: "numeric", month: "2-digit", day: "2-digit", timeZone: "UTC" }).format(date);
+  };
 
-  function Entry({ open, t, onActivate }) {
+  /* 入口：通用“打开右侧面板”图标按钮（原生 SVG，不引入图标库）；
+   * 不显示文字，title 与 aria-label 均为本地化提示，aria-expanded 恒为 false（展开时入口隐藏）。 */
+  function Entry({ t, onActivate }) {
     return React.createElement("button", {
-      type: "button", className: `${NS}-entry`, "aria-label": t("entry.aria"),
-      "aria-expanded": open, "aria-controls": DRAWER_ID,
+      type: "button", id: ENTRY_ID, className: `${NS}-entry`,
+      "aria-label": t("entry.aria"), title: t("entry.aria"),
+      "aria-controls": DRAWER_ID, "aria-expanded": false,
       onClick: (event) => onActivate(event),
-    }, t("entry.label"));
+    }, React.createElement("svg", { viewBox: "0 0 24 24", "aria-hidden": "true" },
+      React.createElement("rect", { x: "3", y: "3", width: "18", height: "18", rx: "2.5" }),
+      React.createElement("line", { x1: "15", y1: "3", x2: "15", y2: "21" })));
   }
-  function Amount({ amount, liability, warning, t }) {
+  function Amount({ amount, liability, warning, t, locale }) {
     if (!amount) return React.createElement("span", { className: cls("amount", "amount-empty") }, "—");
-    const parts = runtime.formatAmountParts(amount, liability);
+    const parts = runtime.formatAmountParts(amount, liability, locale);
     return React.createElement("span", { className: cls("amount") },
       React.createElement("span", { className: cls("amount-value", parts.negative && "negative") }, parts.value),
-      React.createElement("span", { className: cls("currency") }, parts.currency),
+      // 商品标识（币种代码）是账本记号，禁止机器翻译。
+      React.createElement("span", { className: cls("currency"), translate: "no" }, parts.currency),
       warning && parts.negative ? React.createElement("span", { className: cls("amount-warning") }, warning) : null);
   }
   function Icon({ kind, label, onClick, disabled }) {
@@ -142,62 +170,66 @@ window.__ModuleLoader__.load({ id: "dsh-moneypal", factory: (require) => {
     return React.createElement("button", { type: "button", className: cls("icon"), "aria-label": label, onClick, disabled }, React.createElement("svg", { viewBox: "0 0 24 24", "aria-hidden": "true" }, paths.map((d) => React.createElement("path", { key: d, d }))));
   }
   function accountParts(account) { const parts = account.split(":"); const name = parts.at(-1) || account; return { name, path: parts.slice(1, -1).join(":") }; }
-  function AccountRow({ account, liability, t, mini = false }) {
+  function AccountRow({ account, liability, t, locale, mini = false }) {
     const { name, path } = accountParts(account.account);
     if (mini) {
       return React.createElement("div", { className: cls("mini-row") },
-        React.createElement("span", { className: cls("mini-name"), title: account.account }, name),
-        React.createElement(Amount, { amount: account.amounts[0], liability, t }));
+        React.createElement("span", { className: cls("mini-name"), title: account.account, translate: "no" }, name),
+        React.createElement(Amount, { amount: account.amounts[0], liability, t, locale }));
     }
+    // 账户名与路径是账本记号，整体容器禁止机器翻译；明细路径置于容器内继承该属性。
     return React.createElement("div", { className: cls("account") },
-      React.createElement("span", { className: cls("name"), title: account.account }, name, path ? React.createElement("span", { className: cls("path") }, path) : null),
-      React.createElement("span", { className: cls("account-values") }, account.amounts.map((amount, index) => React.createElement(Amount, { key: `${amount.commodity}-${amount.quantity}-${index}`, amount, liability, warning: liability ? t("warn.overpaid") : t("warn.overdrawn"), t }))));
+      React.createElement("span", { className: cls("name"), title: account.account, translate: "no" }, name, path ? React.createElement("span", { className: cls("path") }, path) : null),
+      React.createElement("span", { className: cls("account-values") }, account.amounts.map((amount, index) => React.createElement(Amount, { key: `${amount.commodity}-${amount.quantity}-${index}`, amount, liability, warning: liability ? t("warn.overpaid") : t("warn.overdrawn"), t, locale }))));
   }
-  function Summary({ title, data, liability, t }) {
+  function Summary({ title, data, liability, t, locale }) {
     const totals = data?.totals ?? []; const accounts = data?.accounts ?? [];
     const overpaid = liability ? accounts.filter((account) => account.amounts.some((amount) => !amount.quantity.startsWith("-"))).length : 0;
     return React.createElement("section", { className: cls("section-block", liability && "debt") },
       React.createElement("div", { className: cls("section-label") },
-        React.createElement("i", { className: cls("marker"), "aria-hidden": "true" }), title,
+        React.createElement("h3", null, title),
         React.createElement("em", null, t("group.count", { count: accounts.length }))),
-      React.createElement("div", { className: cls("totals") },
-        React.createElement("p", { className: cls("total-main") }, React.createElement(Amount, { amount: totals[0], liability, t })),
-        totals.length > 1 ? React.createElement("p", { className: cls("total-secondary") }, totals.slice(1).map((amount, index) => React.createElement(Amount, { key: `${amount.commodity}-${index}`, amount, liability, t }))) : null),
+      React.createElement("p", { className: cls("total-main") }, React.createElement(Amount, { amount: totals[0], liability, t, locale })),
+      totals.length > 1 ? React.createElement("p", { className: cls("total-secondary") }, totals.slice(1).map((amount, index) => React.createElement(Amount, { key: `${amount.commodity}-${index}`, amount, liability, t, locale }))) : null,
       liability ? React.createElement("p", { className: cls("inline-info") },
         React.createElement("span", null, t("debt.displayNote")),
         overpaid ? React.createElement("span", null, t("debt.overpaid", { count: overpaid })) : null) : null);
   }
-  function Overview({ snapshot, onDetails, t }) {
-    const preview = [...snapshot.assets.accounts.map((account) => ({ account, liability: false })), ...snapshot.liabilities.accounts.map((account) => ({ account, liability: true }))].slice(0, 3);
+  function Overview({ snapshot, onDetails, t, locale }) {
+    // 预览选择收敛到控制器纯函数：单商品按绝对金额降序，多商品保持原顺序；明细顺序不受影响。
+    const preview = runtime.selectPreviewAccounts(snapshot);
     const count = snapshot.assets.accounts.length + snapshot.liabilities.accounts.length;
+    const multipleCommodities = new Set([...snapshot.assets.totals, ...snapshot.liabilities.totals].map((amount) => amount.commodity)).size > 1;
     return React.createElement(React.Fragment, null,
-      React.createElement(Summary, { title: t("group.assets"), data: snapshot.assets, liability: false, t }), React.createElement(Summary, { title: t("group.liabilities"), data: snapshot.liabilities, liability: true, t }),
-      React.createElement("div", { className: cls("section-label") }, t("overview.list"), React.createElement("em", null, t("overview.listCount", { count }))),
-      preview.map(({ account, liability }) => React.createElement(AccountRow, { key: account.account, account, liability, mini: true, t })),
-      React.createElement("button", { type: "button", className: cls("jump"), onClick: onDetails }, React.createElement("span", null, t("overview.jump")), React.createElement("span", { "aria-hidden": "true" }, "→")),
-      React.createElement("p", { className: cls("caption-line") }, t("overview.caption")));
+      React.createElement(Summary, { title: t("group.assets"), data: snapshot.assets, liability: false, t, locale }), React.createElement(Summary, { title: t("group.liabilities"), data: snapshot.liabilities, liability: true, t, locale }),
+      React.createElement("div", { className: cls("section-label") }, React.createElement("h3", null, t("overview.list"))),
+      preview.map(({ account, liability }) => React.createElement(AccountRow, { key: account.account, account, liability, mini: true, t, locale })),
+      React.createElement("button", { type: "button", className: cls("jump"), onClick: onDetails }, React.createElement("span", null, t("overview.jump", { count })), React.createElement("span", { "aria-hidden": "true" }, "→")),
+      multipleCommodities ? React.createElement("p", { className: cls("caption-line") }, t("overview.caption")) : null);
   }
-  function Details({ snapshot, t }) {
-    const group = (title, data, liability, totalLabel) => React.createElement("section", { key: title, className: cls("group", liability && "debt") },
-      React.createElement("div", { className: cls("group-head") }, React.createElement("b", null, title), React.createElement("small", null, t("group.count", { count: data.accounts.length }))),
-      data.accounts.map((account) => React.createElement(AccountRow, { key: account.account, account, liability, t })),
+  function Details({ snapshot, t, locale }) {
+    // 账户总数超过 50 时为明细分组附加渲染优化修饰类：仅影响分组内账户行的绘制，DOM 仍完整保留。
+    const large = snapshot.assets.accounts.length + snapshot.liabilities.accounts.length > 50;
+    const group = (title, data, liability, totalLabel) => React.createElement("section", { key: title, className: cls("group", liability && "debt", large && "group-large") },
+      React.createElement("div", { className: cls("group-head") }, React.createElement("h3", null, title), React.createElement("small", null, t("group.count", { count: data.accounts.length }))),
+      data.accounts.map((account) => React.createElement(AccountRow, { key: account.account, account, liability, t, locale })),
       React.createElement("p", { className: cls("group-total") },
         React.createElement("span", null, totalLabel),
-        React.createElement("span", { className: cls("account-values") }, data.totals.map((amount, index) => React.createElement(Amount, { key: `${amount.commodity}-${index}`, amount, liability, t })))));
+        React.createElement("span", { className: cls("account-values") }, data.totals.map((amount, index) => React.createElement(Amount, { key: `${amount.commodity}-${index}`, amount, liability, t, locale })))));
     return React.createElement(React.Fragment, null,
       group(t("group.assets"), snapshot.assets, false, t("total.assets")),
       group(t("group.liabilities"), snapshot.liabilities, true, t("total.liabilities")));
   }
   function LoadingBody({ t }) {
     const widths = ["85%", "50%", "100%", "100%", "70%", "100%", "90%"];
-    return React.createElement("div", { role: "status" },
+    // 骨架正文保留可见提示但不承担 role="status"：手动刷新的播报由抽屉内专用 live region 统一负责，避免重复宣读。
+    return React.createElement("div", null,
       React.createElement("div", { className: cls("loading-note") }, t("loading.note")),
       widths.map((width, index) => React.createElement("div", { key: index, className: cls("skeleton"), style: { width, height: index === 1 ? "34px" : "16px" } })));
   }
-  function StateBody({ icon, title, description, action, alert = false, onAction }) {
+  function StateBody({ title, description, action, alert = false, onAction }) {
     return React.createElement("div", { className: cls("state-message") },
-      React.createElement("div", { className: cls("state-icon"), "aria-hidden": "true" }, icon),
-      React.createElement("h4", null, title),
+      React.createElement("h3", null, title),
       React.createElement("div", alert ? { role: "alert" } : undefined, description),
       React.createElement("button", { type: "button", className: cls("state-action"), onClick: onAction }, action));
   }
@@ -207,45 +239,48 @@ window.__ModuleLoader__.load({ id: "dsh-moneypal", factory: (require) => {
     const onKeyDown = (event) => { const index = TABS.findIndex(([id]) => id === tab); let next = -1; if (event.key === "ArrowRight") next = (index + 1) % TABS.length; else if (event.key === "ArrowLeft") next = (index + TABS.length - 1) % TABS.length; else if (event.key === "Home") next = 0; else if (event.key === "End") next = TABS.length - 1; if (next >= 0) { event.preventDefault(); select(TABS[next][0]); } };
     return React.createElement("div", { className: cls("tabs"), role: "tablist", "aria-label": t("tabs.label") }, TABS.map(([id]) => React.createElement("button", { key: id, type: "button", id: `${TAB_PREFIX}-${id}`, role: "tab", className: cls("tab"), "aria-selected": tab === id, "aria-controls": PANEL_ID, tabIndex: tab === id ? 0 : -1, onClick: () => onSelect(id), onKeyDown }, labels[id])));
   }
-  function Banner({ state, onRetry, t }) {
+  function Banner({ state, onRetry, t, locale }) {
     // 探测失败与余额失败同样视为刷新失败：保留快照并给出可重试告警，仅重新请求期间显示“获取最新数据”。
+    // 挂起提示保留可见文字但不承担 role="status"，避免与专用 live region 重复播报；失败告警 role="alert" 保留。
     const failed = state.error ?? state.probeError;
     const message = failed
-      ? (state.refreshedAt ? t("banner.failedWithTime", { time: fmtClock(state.refreshedAt) }) : t("banner.failedNoTime"))
+      ? (state.refreshedAt ? t("banner.failedWithTime", { time: fmtClock(state.refreshedAt, locale) }) : t("banner.failedNoTime"))
       : t("banner.pending");
     return React.createElement("div", { className: cls("banner") },
-      React.createElement("p", { role: failed ? "alert" : "status" }, message),
+      React.createElement("p", { role: failed ? "alert" : undefined }, message),
       React.createElement("button", { type: "button", className: cls("banner-retry"), onClick: onRetry }, t("action.retry")));
   }
-  function bodyFor({ state, tab, onDetails, onRetry, onReread, t }) {
+  /* bodyFor 的刷新动作统一走 onReload：探测失败走重新探测，余额失败直接重试余额请求。
+   * 判定顺序固定：快照 → 探测错误 → 无账本 → 探测中 → 余额加载/读取失败；无账本与空账本是不同状态、不同文案。 */
+  function bodyFor({ state, tab, onDetails, onReload, t, locale }) {
     const snapshot = state.snapshot;
     if (snapshot) {
       const empty = !snapshot.assets.accounts.length && !snapshot.liabilities.accounts.length;
-      if (empty) return StateBody({ icon: "○", title: t("empty.title"), description: t("empty.description"), action: t("action.refresh"), onAction: onRetry });
-      return tab === "overview" ? Overview({ snapshot, onDetails, t }) : Details({ snapshot, t });
+      if (empty) return StateBody({ title: t("empty.title"), description: t("empty.description"), action: t("action.refresh"), onAction: onReload });
+      return tab === "overview" ? Overview({ snapshot, onDetails, t, locale }) : Details({ snapshot, t, locale });
+    }
+    if (state.probeError) {
+      return StateBody({ title: t("error.title"), description: state.probeError, action: t("action.retry"), alert: true, onAction: onReload });
+    }
+    if (state.capability === "ordinary") {
+      return StateBody({ title: t("ordinary.title"), description: t("ordinary.description"), action: t("action.retry"), onAction: onReload });
     }
     if (state.loading) return LoadingBody({ t });
-    if (state.probeError || state.error) {
-      return StateBody({ icon: "!", title: t("error.title"), description: state.probeError ?? state.error ?? t("error.fallback"), action: t("action.reread"), alert: true, onAction: onReread });
+    if (state.error) {
+      return StateBody({ title: t("error.title"), description: state.error ?? t("error.fallback"), action: t("action.refresh"), alert: true, onAction: onReload });
     }
     return LoadingBody({ t });
   }
-  function statusFor({ state, snapshot, empty, t }) {
-    if (state.loading) return snapshot ? t("status.refreshing") : t("status.waitingLedger");
-    if (empty || (!snapshot && (state.error || state.probeError))) return t("status.waitingBalance");
-    return t("status.autoRefresh");
-  }
-  function freshLabel({ state, snapshot, t }) {
+  function freshLabel({ state, snapshot, t, locale }) {
     if (!snapshot) return "—";
-    if (state.stale) return state.refreshedAt ? t("status.lastSuccess", { time: fmtClock(state.refreshedAt) }) : "—";
-    return state.refreshedAt ? t("status.updatedAt", { time: fmtClock(state.refreshedAt) }) : "—";
+    if (state.stale) return state.refreshedAt ? t("status.lastSuccess", { time: fmtClock(state.refreshedAt, locale) }) : "—";
+    return state.refreshedAt ? t("status.updatedAt", { time: fmtClock(state.refreshedAt, locale) }) : "—";
   }
   /* 桌面：非模态抽屉，Escape 仅在焦点位于抽屉内部且未被上层浮层处理时关闭；
    * 移动端：模态对话框，背景由遮罩隔离交互；打开或切入时焦点移入抽屉，Tab 循环，关闭后恢复原焦点。
-   * onReload 为统一刷新入口：探测失败走重新探测，否则刷新余额。 */
-  function Drawer({ state, tab, onTab, compact, drawerRef, onClose, onReload, onReread, t }) {
+   * onReload 为唯一刷新入口：候选能力直接刷新余额，其余（探测失败等）走重新探测。 */
+  function Drawer({ state, tab, onTab, compact, drawerRef, onClose, onReload, t, locale, announce }) {
     const snapshot = state.snapshot;
-    const empty = Boolean(snapshot && !snapshot.assets.accounts.length && !snapshot.liabilities.accounts.length);
     const onKeyDown = (event) => { if (event.key === "Escape" && !event.defaultPrevented) { event.preventDefault(); onClose(); } };
     return React.createElement(React.Fragment, null,
       compact ? React.createElement("div", { className: cls("backdrop"), onClick: onClose, "aria-hidden": "true" }) : null,
@@ -253,17 +288,25 @@ window.__ModuleLoader__.load({ id: "dsh-moneypal", factory: (require) => {
         id: DRAWER_ID, ref: drawerRef, tabIndex: -1, className: cls("drawer"), onKeyDown,
         ...(compact ? { role: "dialog", "aria-modal": "true", "aria-label": t("drawer.label") } : { "aria-label": t("drawer.label") }),
       },
+        // 手动刷新专用读屏播报区：唯一出口，常驻且视觉隐藏；后台刷新不写入，语言切换经 t 即时更新。
+        React.createElement("div", { role: "status", "aria-live": "polite", "aria-atomic": "true", className: cls("visually-hidden") }, announce ? t(announce) : ""),
         React.createElement("header", { className: cls("toolbar") },
-          React.createElement("div", { className: cls("title") }, React.createElement("h2", { id: TITLE_ID }, t("drawer.title")), snapshot ? React.createElement("small", { className: cls("subtitle") }, t("drawer.asOf", { date: fmtAsOf(snapshot.asOf) })) : null),
+          React.createElement("div", { className: cls("title") }, React.createElement("h2", { id: TITLE_ID }, t("drawer.title")), snapshot ? React.createElement("small", { className: cls("subtitle") }, t("drawer.asOf", { date: fmtAsOf(snapshot.asOf, locale) })) : null),
           React.createElement(Icon, { kind: "refresh", label: t("drawer.refresh"), onClick: onReload, disabled: state.loading }),
           React.createElement(Icon, { kind: "close", label: t("drawer.close"), onClick: onClose })),
         React.createElement("div", { className: cls("tab-wrap") }, React.createElement(TabBar, { tab, onSelect: onTab, t })),
-        snapshot && state.stale ? React.createElement(Banner, { state, onRetry: onReload, t }) : null,
-        React.createElement("div", { id: PANEL_ID, role: "tabpanel", className: cls("content"), "aria-labelledby": `${TAB_PREFIX}-${tab}` },
-          bodyFor({ state, tab, onDetails: () => { onTab("details"); document.getElementById(`${TAB_PREFIX}-details`)?.focus(); }, onRetry: onReload, onReread, t })),
-        React.createElement("footer", { className: cls("footer") },
-          React.createElement("span", null, React.createElement("i", { className: cls("dot"), "aria-hidden": "true" }), statusFor({ state, snapshot, empty, t })),
-          React.createElement("span", null, freshLabel({ state, snapshot, t })))));
+        snapshot && state.stale ? React.createElement(Banner, { state, onRetry: onReload, t, locale }) : null,
+        // tabpanel 可聚焦（tabIndex 0）：键盘用户可停靠滚动区并用方向键/PageUp/PageDown 滚动，滚动交给浏览器原生行为。
+        React.createElement("div", { id: PANEL_ID, role: "tabpanel", className: cls("content"), "aria-labelledby": `${TAB_PREFIX}-${tab}`, tabIndex: 0 },
+          bodyFor({ state, tab, onDetails: () => { onTab("details"); document.getElementById(`${TAB_PREFIX}-details`)?.focus(); }, onReload, t, locale })),
+        React.createElement("footer", { className: cls("footer") }, (() => {
+          // 页脚状态模型在控制器侧维护（runtime.footerStatus）：文案键 + 圆点类型，含义由文字表达。
+          const status = runtime.footerStatus(state);
+          return [
+            React.createElement("span", { key: "status" }, React.createElement("i", { className: cls("dot", `dot-${status.dot}`), "aria-hidden": "true" }), t(status.key)),
+            React.createElement("span", { key: "fresh" }, freshLabel({ state, snapshot, t, locale })),
+          ];
+        })())));
   }
   /* 移动端模态焦点循环；焦点停在抽屉根节点或仍在外部（打开瞬间、遮罩外的背景）时，Tab 直接落到循环边界，
    * 无可聚焦控件时聚焦抽屉本身。桌面不安装全局键盘处理，背景（对话）保持可操作。 */
@@ -293,12 +336,12 @@ window.__ModuleLoader__.load({ id: "dsh-moneypal", factory: (require) => {
   function removeStyle() { document.getElementById(STYLE_ID)?.remove(); }
 
   /* ═══ DSH 接入：RPC 适配、controller、slot 注册与生命周期 ═══ */
-  let lastTrigger; let pendingFocus = false; let outsideFocus;
-  // 关闭恢复：优先恢复仍连接文档的有效触发入口，否则恢复记录的外部原焦点。
-  const focusTrigger = () => {
-    const trigger = lastTrigger; lastTrigger = undefined;
+  let pendingFocus = false; let outsideFocus;
+  // 手动关闭后的焦点恢复：优先聚焦重新挂载的入口（固定 ID），入口不存在时恢复仍连接文档的外部原焦点。
+  const focusEntryOrOutside = () => {
+    const entry = document.getElementById(ENTRY_ID);
+    if (entry) { entry.focus?.(); return; }
     const previous = outsideFocus; outsideFocus = undefined;
-    if (trigger?.isConnected) { trigger.focus?.(); return; }
     if (previous?.isConnected) previous.focus?.();
   };
   const callError = (error) => new runtime.BalanceClientError(error?.code ?? "balance_unavailable", error?.message ?? "暂时无法读取账户余额，请重试。");
@@ -307,12 +350,14 @@ window.__ModuleLoader__.load({ id: "dsh-moneypal", factory: (require) => {
   function apply(ctx) {
     installStyle();
     ctx.effect(() => removeStyle, `${NS}.style()`);
+    // 取得 window.localStorage 本身也可能抛错（隐私模式等）：安全获取，失败时降级为内存偏好。
+    const safeStorage = (() => { try { return window.localStorage; } catch { return undefined; } })();
     const controller = new runtime.BalanceController({
       rpc: {
         capability: async (sessionId, signal) => { const outer = await ctx.connection.rpc.call("/dsh-moneypal", "capability", { sessionId }, signal); if (!outer?.ok) throw callError(); const inner = outer.value; if (!inner?.ok) throw callError(inner?.error); return Boolean(inner.value?.candidate); },
         balances: async (sessionId, asOf, signal) => { const outer = await ctx.connection.rpc.call("/dsh-moneypal", "balances", { sessionId, asOf }, signal); if (!outer?.ok) throw callError(); const inner = outer.value; if (!inner?.ok) throw callError(inner?.error); return inner.value; },
       },
-      storage: window.localStorage, visible: () => document.visibilityState === "visible",
+      storage: safeStorage, visible: () => document.visibilityState === "visible",
     });
     ctx.effect(() => () => controller.dispose(), `${NS}.controller()`);
     const face = setupLocale(ctx);
@@ -320,30 +365,65 @@ window.__ModuleLoader__.load({ id: "dsh-moneypal", factory: (require) => {
 
     function useBalanceState() { return React.useSyncExternalStore((listener) => controller.subscribe(listener), () => controller.state); }
     // 两个挂载点都订阅 locale 快照：宿主切换语言时触发重渲染，face.t 实时翻译函数随之输出新文案。
-    function useLocale() { React.useSyncExternalStore(face.subscribe, face.getSnapshot); return face.t; }
+    // 语言来源为宿主 LocaleRuntime 的 active 值（已验证），映射为 BCP 47 供 Intl 格式化使用；未知值回退中文。
+    function useLocale() {
+      const snapshot = React.useSyncExternalStore(face.subscribe, face.getSnapshot);
+      return { t: face.t, locale: snapshot?.active === "en" ? "en-US" : "zh-CN" };
+    }
 
-    function HeaderSlot(sessionProps) {
+    /* 右侧工具区入口：可见性只由 preset 与会话一致性决定（capability、探测错误、账本存在性一律不参与）。
+     * 不调用 setSession：控制器上下文仅由 DrawerSlot 同步，入口只负责主动打开。 */
+    function UtilitySlot(sessionProps) {
       const state = useBalanceState();
-      const t = useLocale();
-      React.useEffect(() => { void controller.setSession(sessionProps.sessionId); }, [sessionProps.sessionId]);
-      if (!sessionProps.sessionId || state.sessionId !== sessionProps.sessionId || state.capability !== "candidate") return null;
-      return Entry({ open: state.open, t, onActivate: (event) => { lastTrigger = event.currentTarget; pendingFocus = true; void controller.toggle(true); } });
+      const { t } = useLocale();
+      const sessionId = sessionProps.useSessions(selectSessionId);
+      const presetId = sessionProps.useSessions(selectPreset);
+      const show = Boolean(sessionId) && presetId === MONEYPAL_PRESET
+        && state.sessionId === sessionId && state.presetId === presetId && state.open === false;
+      if (!show) return null;
+      return Entry({ t, onActivate: () => { pendingFocus = true; void controller.toggle(true); } });
     }
 
     function DrawerSlot(globalProps) {
       const state = useBalanceState();
-      const t = useLocale();
+      const { t, locale } = useLocale();
       const compact = useCompactMode();
       const drawerRef = React.useRef(null);
       const [tab, setTab] = React.useState("overview");
-      const sessionId = globalProps.useSessions((sessions) => sessions.current);
-      React.useEffect(() => { void controller.setSession(sessionId); }, [sessionId]);
+      // 手动刷新读屏播报：announce 保存文案键（语言切换即时生效），manualRef 记录手动刷新所属会话。
+      // 后台自动刷新不写入 manualRef，成功保持安静；失败仍由既有错误 role="alert" 播报。
+      const [announce, setAnnounce] = React.useState("");
+      const manualSession = React.useRef("");
+      const manualClose = React.useRef(false);
+      // 唯一会话同步点：会话、preset 与屏幕模式一并交给控制器；重复上下文由控制器自行忽略。
+      // 选择器返回字符串，不返回每次新建的对象，避免不稳定订阅快照。
+      const sessionId = globalProps.useSessions(selectSessionId);
+      const presetId = globalProps.useSessions(selectPreset);
+      React.useEffect(() => { void controller.setSession(sessionId, presetId, compact); }, [sessionId, presetId, compact]);
       React.useEffect(() => { setTab("overview"); }, [state.open, state.sessionId]);
-      React.useEffect(() => { const onVisibility = () => controller.visibleChanged(); document.addEventListener("visibilitychange", onVisibility); return () => document.removeEventListener("visibilitychange", onVisibility); }, []);
+      React.useEffect(() => {
+        const onVisibility = () => {
+          // 页面隐藏即放弃手动刷新播报：迟到结果不再宣读；可见性恢复由控制器重新探测与刷新。
+          if (document.visibilityState !== "visible") { manualSession.current = ""; setAnnounce(""); }
+          controller.visibleChanged();
+        };
+        document.addEventListener("visibilitychange", onVisibility);
+        return () => document.removeEventListener("visibilitychange", onVisibility);
+      }, []);
+      // 播报结果只依据控制器状态判定，不依据 retry() 的 Promise：探测成功后余额请求才刚启动，
+      // Promise 返回时余额可能仍未完成，据其宣布成功会提前播报。
+      React.useEffect(() => {
+        if (!manualSession.current) return;
+        if (!state.open || state.sessionId !== manualSession.current) { manualSession.current = ""; setAnnounce(""); return; }
+        if (state.loading) return;
+        if (state.error || state.probeError) { manualSession.current = ""; setAnnounce(""); return; }
+        if (state.snapshot && !state.stale) { manualSession.current = ""; setAnnounce("status.refreshComplete"); return; }
+        // 其余状态（无快照、待更新等）不宣称成功，继续等待。
+      }, [state]);
       React.useEffect(() => {
         if (!state.open) return undefined;
         // 自动恢复的打开状态不抢焦点；用户主动打开（入口激活）才聚焦抽屉。
-        // 移动端（含桌面切入窄屏）为模态：焦点仍在外部时移入抽屉并记录原焦点，关闭时经 focusTrigger 恢复。
+        // 移动端（含桌面切入窄屏）为模态：焦点仍在外部时移入抽屉并记录原焦点，关闭后恢复入口或原焦点。
         if (pendingFocus) { pendingFocus = false; drawerRef.current?.focus(); }
         else if (compact) {
           const active = document.activeElement;
@@ -354,20 +434,34 @@ window.__ModuleLoader__.load({ id: "dsh-moneypal", factory: (require) => {
         document.addEventListener("keydown", onKey);
         return () => document.removeEventListener("keydown", onKey);
       }, [state.open, compact]);
+      // 手动关闭后的焦点恢复：等本次提交（入口已随 open=false 重新挂载）在 effect 中处理，不使用任意延时。
+      React.useEffect(() => {
+        if (state.open || !manualClose.current) return;
+        manualClose.current = false;
+        focusEntryOrOutside();
+      }, [state.open]);
+      // 渲染前一致性闸门：宿主当前会话/preset 与控制器一致才渲染，防止 effect 执行前露出上一会话的入口或数据。
       if (!state.open) return null;
-      const close = () => { setTab("overview"); void controller.toggle(false).then(focusTrigger); };
-      // 统一刷新入口：探测失败时刷新按钮走重新探测，否则走余额刷新。
-      const reload = () => { void (state.probeError ? controller.retry() : controller.refresh()); };
+      if (!sessionId || presetId !== MONEYPAL_PRESET || state.sessionId !== sessionId || state.presetId !== presetId) return null;
+      const close = () => { setTab("overview"); manualSession.current = ""; setAnnounce(""); manualClose.current = true; void controller.toggle(false); };
+      // 唯一刷新路由：候选能力且无探测失败时刷新余额（普通失败直接重试余额），其余情况重新探测恢复。
+      // 读取最新控制器状态；页面隐藏、抽屉关闭或已在加载时忽略：不重复请求，也避免把进行中的后台刷新误标为手动刷新。
+      const reload = () => {
+        const current = controller.state;
+        if (!current.open || current.loading || document.visibilityState !== "visible") return;
+        manualSession.current = current.sessionId;
+        setAnnounce("status.refreshing");
+        void (current.capability === "candidate" && !current.probeError ? controller.refresh() : controller.retry());
+      };
       return React.createElement(Drawer, {
-        state, tab, compact, drawerRef, t,
+        state, tab, compact, drawerRef, t, locale, announce,
         onTab: setTab,
         onClose: close,
         onReload: reload,
-        onReread: () => void controller.retry(),
       });
     }
 
-    ctx.slots.inject("conversation.session.header.actions", () => ctx.slots.register({ name: "conversation.session.header.actions", id: "dsh-moneypal-balance", order: 20, inject: (sessionId) => ({ sessionId }) }, HeaderSlot));
+    ctx.slots.inject("conversation.session.header.utilities", () => ctx.slots.register({ name: "conversation.session.header.utilities", id: "dsh-moneypal-balance", order: 20 }, UtilitySlot));
     ctx.slots.inject("shell.overlay", () => ctx.slots.register({ name: "shell.overlay", id: "dsh-moneypal-balance-drawer", order: 20 }, DrawerSlot));
   }
 

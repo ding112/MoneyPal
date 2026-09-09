@@ -321,7 +321,12 @@ dsh plugin --profile web exec dsh-moneypal install-preset
 
 ### 开发验证
 
-日常开发运行 `npm run test:fast`；针对单个改动可先构建，再运行对应的 `dist/test/*.test.js`。合并前运行 `npm test`。涉及插件入口、公开 Schema、宿主注册、运行时依赖或发布流程时，运行 `npm run test:release`；它复用一次构建完成全量测试、包检查和 tarball 隔离安装验收。
+- 单次小改动：`npm run build:base` 后运行对应的 `dist/test/<文件>.test.js`。`build:base` 会清空 `dist`，构建产物只对应最后一次源码，修改后不能省略重新编译。
+- 阶段性快速验证：`npm run test:fast`；合并前：`npm test`；涉及发布、包入口、Schema、注入、宿主注册、依赖或发布流程的改动：`npm run test:release`。
+- `build:base` 清空 `dist` 并生成基础产物；`npm run build` 额外装配两个发布包与专家 ZIP。任何 `:built` 命令要求对应构建刚完成。
+- 本地集成允许明确跳过缺失真实运行时的 18 项；发布严格要求真实运行时可用兼容。
+- 发布 UI 验收只在发布前通过 ego-browser skill 执行（清单见 DSH 插件开发规范“验证流程”）；日常测试不包含 React/DOM 模拟器或浏览器测试。
+- `npm run test:fast`、`npm test`、`npm run test:release` 三个命令相互包含，不要用它们重复验证同一次修改：按所处阶段选择相应的最高层级即可；单独诊断失败文件时不受此限制。
 
 ### WorkBuddy 专家包：恰恰账本
 

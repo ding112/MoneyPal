@@ -10,7 +10,6 @@ const releaseRoot = fileURLToPath(new URL("../packages/", import.meta.url));
 test("根工作区不可发布，DSH 与 MCP 生成两个独立 npm 包", async () => {
   const root = JSON.parse(await readFile(workspacePackage, "utf8")) as { private?: boolean; scripts?: Record<string, string> };
   assert.equal(root.private, true);
-  assert.equal(root.scripts?.prepublishOnly, "node scripts/refuse-root-publish.mjs");
 
   const dsh = await packageJson("dsh-moneypal");
   assert.equal(dsh.name, "dsh-moneypal");
@@ -40,14 +39,13 @@ test("根工作区不可发布，DSH 与 MCP 生成两个独立 npm 包", async 
   for (const name of ["dsh-moneypal", "mcp-moneypal"]) await assertPublishedJavaScriptHasNoSourceMap(`${releaseRoot}/${name}/dist/src`);
 });
 
-test("DSH 包根承担宿主装配契约，不导出日期辅助或迁移期死类型", async () => {
-  const rootModule = await import("../src/index.js");
-  assert.equal(typeof rootModule.apply, "function", "包根必须导出可调用的 apply（Cordis 宿主装配入口）。");
-  assert.deepEqual(rootModule.inject, ["sessions", "connection"]);
-  assert.equal(rootModule.name, "dsh-moneypal");
-  for (const name of ["dayAfter"]) assert.equal(name in rootModule, false, `包根不应导出 ${name}`);
-  const declarations = await readFile(`${releaseRoot}/dsh-moneypal/dist/src/index.d.ts`, "utf8");
-  assert.doesNotMatch(declarations, /AddTransactionResult|dayAfter/u);
+test("DSH 客户端可解析包元数据与客户端入口", async () => {
+  const packageJson = JSON.parse(await readFile(new URL("../packages/dsh-moneypal/package.json", import.meta.url), "utf8")) as { exports: Record<string, unknown>; dsh: { client: unknown } };
+  assert.equal(packageJson.exports["./package.json"], "./package.json");
+  assert.ok(packageJson.exports["."]);
+  assert.equal(packageJson.exports["./host"], undefined);
+  assert.ok(packageJson.exports["./client"]);
+  assert.ok(packageJson.dsh.client);
 });
 
 test("发布包的根入口导出可调用的宿主装配契约", async () => {

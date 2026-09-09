@@ -6,14 +6,13 @@ import { after, before, test } from "node:test";
 
 import { createLedgerEngine } from "../src/finance/engine.js";
 import { FinanceError } from "../src/finance/errors.js";
-import { inspectRuntime } from "../src/finance/runtime.js";
 import { initializeLedger } from "../src/init-ledger.js";
 import { createConfirmedTransactionWriter } from "../src/finance/write.js";
 import type { Transaction } from "../src/finance/types.js";
+import { runtimeSkipReason } from "./runtime-fixtures.js";
 
 /** 本文件在真实 MoneyPal 运行时上验证写入路径的 Beancount 语义；未安装时整体跳过。 */
-const runtime = await inspectRuntime().catch(() => undefined);
-const skip = runtime?.available ? false : "未检测到可用的 MoneyPal 运行时；请先执行 setup-runtime。";
+const skip = await runtimeSkipReason();
 
 let root: string;
 

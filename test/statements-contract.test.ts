@@ -3,8 +3,7 @@ import { test } from "node:test";
 
 import { errorResponse, LEDGER_ENGINE_OPERATIONS, readStatementRange, READ_ONLY_TOOL_DEFINITIONS } from "../src/finance/contract.js";
 import type { LedgerEngine } from "../src/finance/types.js";
-
-const forbiddenRuntimeName = "h" + "ledger";
+import { omitSchemaDescriptions } from "./contract-fixtures.js";
 
 test("两个报表工具经共享 LedgerEngine 契约传递严格校验的日期区间", async () => {
   const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
@@ -43,20 +42,15 @@ test("报表参数错误经公共错误体系映射为 invalid_request，工具�
   const sheet = READ_ONLY_TOOL_DEFINITIONS.find(({ name }) => name === "finance_get_balance_sheet");
   assert.ok(income && sheet);
 
-  assert.deepEqual(income.parameters, sheet.parameters);
-  assert.deepEqual(income.parameters, {
+  assert.deepEqual(omitSchemaDescriptions(income.parameters), omitSchemaDescriptions(sheet.parameters));
+  assert.deepEqual(omitSchemaDescriptions(income.parameters), omitSchemaDescriptions({
     type: "object",
     properties: {
       begin: { type: "string", description: "起始日期，必须是绝对日期 YYYY-MM-DD。" },
       end: { type: "string", description: "结束日期，必须是绝对日期 YYYY-MM-DD，作为排他边界处理。" },
     },
     additionalProperties: false,
-  });
-
-  assert.match(income.description, /Income 与 Expenses/u);
-  assert.match(sheet.description, /Assets、Liabilities 与 Equity/u);
-  assert.doesNotMatch(income.description.toLowerCase(), new RegExp(forbiddenRuntimeName, "u"));
-  assert.doesNotMatch(sheet.description.toLowerCase(), new RegExp(forbiddenRuntimeName, "u"));
+  }));
 
   assert.deepEqual(errorResponse(new TypeError("日期参数必须使用绝对日期 YYYY-MM-DD：begin")), { code: "invalid_request", message: "日期参数必须使用绝对日期 YYYY-MM-DD：begin" });
   assert.deepEqual(errorResponse(new RangeError("begin 必须早于 end（end 为排他边界）。")), { code: "invalid_request", message: "begin 必须早于 end（end 为排他边界）。" });

@@ -9,9 +9,8 @@ import { test } from "node:test";
 import { managedPresetPath, standardPreset } from "./preset-fixtures.js";
 
 const execute = promisify(execFile);
-const dshCommand = fileURLToPath(new URL("../packages/dsh-moneypal/dist/src/main.js", import.meta.url));
-const localDshCommand = fileURLToPath(new URL("../src/main.js", import.meta.url));
-const mcpCommand = fileURLToPath(new URL("../packages/mcp-moneypal/dist/src/mcp-main.js", import.meta.url));
+const dshCommand = fileURLToPath(new URL("../src/main.js", import.meta.url));
+const mcpCommand = fileURLToPath(new URL("../src/mcp-main.js", import.meta.url));
 
 test("DSH CLI 不再启动 MCP 服务器", async () => {
   await assert.rejects(
@@ -68,7 +67,7 @@ test("本地 CLI 安装预设时使用 DSH 包名而非根工作区包名", asyn
   try {
     await standardPreset(root);
 
-    await execute(process.execPath, [localDshCommand, "install-preset"], {
+    await execute(process.execPath, [dshCommand, "install-preset"], {
       env: { ...process.env, DSH_HOME: root },
     });
 
@@ -95,13 +94,13 @@ test("CLI uninstall-preset 移除托管预设并可重复执行", async () => {
   try {
     await standardPreset(root);
     const env = { ...process.env, DSH_HOME: root };
-    await execute(process.execPath, [localDshCommand, "install-preset"], { env });
+    await execute(process.execPath, [dshCommand, "install-preset"], { env });
 
-    const removed = await execute(process.execPath, [localDshCommand, "uninstall-preset"], { env });
+    const removed = await execute(process.execPath, [dshCommand, "uninstall-preset"], { env });
     assert.match(removed.stdout, /已移除托管预设/u);
     await assert.rejects(access(managedPresetPath(root)));
 
-    const again = await execute(process.execPath, [localDshCommand, "uninstall-preset"], { env });
+    const again = await execute(process.execPath, [dshCommand, "uninstall-preset"], { env });
     assert.match(again.stdout, /无需卸载/u);
   } finally {
     await rm(root, { recursive: true, force: true });
@@ -116,7 +115,7 @@ test("CLI uninstall-preset 拒绝删除没有托管标记的预设", async () =>
     await writeFile(join(target, "agent.cordis.yml"), "- id: user\n  name: user-plugin\n");
 
     await assert.rejects(
-      execute(process.execPath, [localDshCommand, "uninstall-preset"], { env: { ...process.env, DSH_HOME: root } }),
+      execute(process.execPath, [dshCommand, "uninstall-preset"], { env: { ...process.env, DSH_HOME: root } }),
       (error: unknown) => error instanceof Error
         && "stderr" in error
         && typeof error.stderr === "string"
@@ -150,33 +149,33 @@ chmodSync(join(directory, "bin", "python"), 0o700);
   const env: NodeJS.ProcessEnv = { ...process.env, HOME: home, MONEYPAL_SETUP_LOG: log };
   delete env.MONEYPAL_PYTHON;
   try {
-    await execute(process.execPath, [localDshCommand, "setup-runtime", "--python", bootstrap], { env });
+    await execute(process.execPath, [dshCommand, "setup-runtime", "--python", bootstrap], { env });
     let calls = await readFile(log, "utf8");
     assert.match(calls, /pip install beancount==3\.2\.3 beanquery==0\.2\.0/u);
 
     await rm(runtimeDirectory, { recursive: true, force: true });
     await rm(log, { force: true });
-    await execute(process.execPath, [localDshCommand, "setup-runtime", "--upgrade", "--python", bootstrap], { env });
+    await execute(process.execPath, [dshCommand, "setup-runtime", "--upgrade", "--python", bootstrap], { env });
     calls = await readFile(log, "utf8");
     assert.match(calls, /pip install --upgrade beancount==3\.2\.3 beanquery==0\.2\.0/u);
 
     await writeFile(`${runtimeDirectory}.setup.lock`, "busy", { flag: "wx" });
-    const status = JSON.parse((await execute(process.execPath, [localDshCommand, "runtime-status"], { env })).stdout) as { available: boolean; compatible: boolean };
+    const status = JSON.parse((await execute(process.execPath, [dshCommand, "runtime-status"], { env })).stdout) as { available: boolean; compatible: boolean };
     assert.deepEqual({ available: status.available, compatible: status.compatible }, { available: false, compatible: false });
     await assert.rejects(
-      execute(process.execPath, [localDshCommand, "setup-runtime"], { env }),
+      execute(process.execPath, [dshCommand, "setup-runtime"], { env }),
       (error: unknown) => error instanceof Error && "stderr" in error && /\u6b63在由另一个设置进程更新/u.test(String(error.stderr)),
     );
     await rm(`${runtimeDirectory}.setup.lock`, { force: true });
     await mkdir(`${runtimeDirectory}.use`, { recursive: true });
     await writeFile(join(`${runtimeDirectory}.use`, "active.lock"), JSON.stringify({ ownerPid: process.pid }), { flag: "wx" });
     await assert.rejects(
-      execute(process.execPath, [localDshCommand, "setup-runtime"], { env }),
+      execute(process.execPath, [dshCommand, "setup-runtime"], { env }),
       (error: unknown) => error instanceof Error && "stderr" in error && /\u6b63被账本操作使用/u.test(String(error.stderr)),
     );
     await rm(`${runtimeDirectory}.use`, { recursive: true, force: true });
     await writeFile(`${runtimeDirectory}.setup.lock`, JSON.stringify({ ownerPid: 2_147_483_647 }), { flag: "wx" });
-    const recovered = JSON.parse((await execute(process.execPath, [localDshCommand, "setup-runtime"], { env })).stdout) as { available: boolean; compatible: boolean };
+    const recovered = JSON.parse((await execute(process.execPath, [dshCommand, "setup-runtime"], { env })).stdout) as { available: boolean; compatible: boolean };
     assert.deepEqual({ available: recovered.available, compatible: recovered.compatible }, { available: true, compatible: true });
   } finally {
     await rm(home, { recursive: true, force: true });

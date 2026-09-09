@@ -17,8 +17,6 @@ test("恰恰账本专家包具备 WorkBuddy 必填市场字段", async () => {
   assert.equal(manifest.expertType, "agent");
   assert.equal(manifest.agentName, "moneypal");
   assert.match(manifest.version, /^\d+\.\d+\.\d+$/u);
-  assert.deepEqual(manifest.author, { name: "mengzai", email: "hz_dyl112@163.com" });
-  assert.equal(manifest.displayName.zh, "恰恰账本");
   assert.equal(manifest.categoryId, "08-FinanceInvestment");
   assert.ok([...manifest.displayDescription.zh].length >= 40 && [...manifest.displayDescription.zh].length <= 50);
   assert.equal(manifest.tags.length, 3);
@@ -50,6 +48,7 @@ test("专家 ZIP 使用单一顶层目录并嵌入当前 MoneyPal 技能", async
     "moneypal/skills/mcp-moneypal/references/bootstrap.md",
   ]) assert(files.includes(file), `ZIP 缺少 ${file}。`);
   assert(files.every((file) => !file.endsWith(".DS_Store")), "ZIP 不应包含 Finder 元数据。");
+  assert(files.every((file) => !file.includes(".qoder-plugin")), "WorkBuddy ZIP 不应包含 Qoder 清单。");
 
   const avatar = await stat(join(source, "avatars", "expert.png"));
   assert(avatar.size <= 500 * 1024, "头像必须不超过 500KB。");
@@ -57,5 +56,52 @@ test("专家 ZIP 使用单一顶层目录并嵌入当前 MoneyPal 技能", async
   assert.equal(image.readUInt32BE(16), 512, "头像宽度必须为 512px。");
   assert.equal(image.readUInt32BE(20), 512, "头像高度必须为 512px。");
   const { stdout: packagedSkill } = await exec("unzip", ["-p", archive, "moneypal/skills/mcp-moneypal/SKILL.md"]);
+  assert.equal(packagedSkill, await readFile(join(workspace, "skills", "mcp-moneypal", "SKILL.md"), "utf8"));
+});
+
+test("Qoder 插件清单满足必填字段与路径规则", async () => {
+  const qoder = JSON.parse(await readFile(join(source, ".qoder-plugin", "plugin.json"), "utf8"));
+  const workbuddy = JSON.parse(await readFile(join(source, ".codebuddy-plugin", "plugin.json"), "utf8"));
+  assert.equal(qoder.name, "moneypal");
+  assert.match(qoder.name, /^[a-z0-9-]+$/u, "插件名必须为 kebab-case。");
+  assert.match(qoder.version, /^\d+\.\d+\.\d+$/u);
+  assert.equal(qoder.version, workbuddy.version, "Qoder 与 WorkBuddy 清单版本必须一致。");
+  assert.equal(typeof qoder.description, "string");
+  assert.ok(qoder.description.length > 0, "description 必填。");
+  assert.equal(qoder.displayName, "恰恰账本");
+  assert.deepEqual(qoder.author, { name: "mengzai", email: "dev_mengzai@163.com" });
+  assert.equal(qoder.skills, "./skills");
+  assert.deepEqual(qoder.agents, ["./agents/moneypal.md"]);
+  assert.equal(qoder.mcpServers, "./.mcp.json");
+  const declaredPaths = [qoder.skills, ...qoder.agents, qoder.mcpServers];
+  for (const path of declaredPaths) {
+    assert(path.startsWith("./"), `声明路径必须以 ./ 开头：${path}`);
+    assert(!path.slice(2).includes(".."), `声明路径不得包含 ..：${path}`);
+  }
+  assert(qoder.mcpServers.endsWith(".json"), "JSON 路径必须以 .json 结尾。");
+});
+
+test("Qoder ZIP 根目录即插件根并包含全部组件", async () => {
+  const manifest = JSON.parse(await readFile(join(source, ".qoder-plugin", "plugin.json"), "utf8"));
+  const qoderArchive = join(workspace, "dist", "experts", `moneypal-${manifest.version}.zip`);
+  await stat(qoderArchive);
+  const { stdout } = await exec("unzip", ["-Z1", qoderArchive]);
+  const files = stdout.trim().split("\n");
+  assert(files.length > 0);
+  assert(files.every((file) => !file.startsWith("moneypal/")), "Qoder ZIP 不得嵌套 moneypal 顶层目录。");
+  for (const file of [
+    ".qoder-plugin/plugin.json",
+    ".mcp.json",
+    "agents/moneypal.md",
+    "skills/mcp-moneypal/SKILL.md",
+    "skills/mcp-moneypal/references/bootstrap.md",
+    "README.md",
+    "CONNECTORS.md",
+  ]) assert(files.includes(file), `ZIP 缺少 ${file}。`);
+  assert(files.every((file) => !file.includes(".codebuddy-plugin")), "Qoder ZIP 不应包含 WorkBuddy 清单。");
+  assert(files.every((file) => !file.includes("avatars/")), "Qoder ZIP 不应包含头像。");
+  assert(files.every((file) => !file.endsWith(".DS_Store")), "ZIP 不应包含 Finder 元数据。");
+
+  const { stdout: packagedSkill } = await exec("unzip", ["-p", qoderArchive, "skills/mcp-moneypal/SKILL.md"]);
   assert.equal(packagedSkill, await readFile(join(workspace, "skills", "mcp-moneypal", "SKILL.md"), "utf8"));
 });

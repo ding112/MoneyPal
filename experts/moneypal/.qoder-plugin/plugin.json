@@ -1,0 +1,21 @@
+{
+  "name": "moneypal",
+  "version": "1.0.2",
+  "description": "全自动记账，账单一键导入，收支自动归类，余额报表一目了然；每笔记账先预览再确认，省心又安心。",
+  "displayName": "恰恰账本",
+  "author": {
+    "name": "mengzai",
+    "email": "dev_mengzai@163.com"
+  },
+  "keywords": [
+    "beancount",
+    "ledger",
+    "bookkeeping",
+    "finance"
+  ],
+  "skills": "./skills",
+  "agents": [
+    "./agents/moneypal.md"
+  ],
+  "mcpServers": "./.mcp.json"
+}
