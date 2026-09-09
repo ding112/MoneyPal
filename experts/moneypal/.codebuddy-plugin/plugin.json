@@ -1,10 +1,10 @@
 {
   "name": "moneypal",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Helps people review and maintain their local Beancount ledgers through MoneyPal.",
   "author": {
     "name": "mengzai",
-    "email": "hz_dyl112@163.com"
+    "email": "dev_mengzai@163.com"
   },
   "agents": [
     "./agents/moneypal.md"
