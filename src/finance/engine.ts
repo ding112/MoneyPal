@@ -80,6 +80,9 @@ export async function runBridge<T>(options: BridgeProcessOptions, operation: Bri
       return;
     }
     signal?.addEventListener("abort", abort, { once: true });
+    // 子进程可能在请求写入前就退出（缺少依赖、立即崩溃或已被终止）；写入失败由 close 事件统一决定结果，
+    // 不能让 stdin 的 EPIPE 变成未捕获异常。
+    child.stdin.on("error", () => { /* 结果由 close 事件决定 */ });
     child.stdin.end(request);
   }); } finally { await release?.release(); }
 }
