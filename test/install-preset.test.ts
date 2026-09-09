@@ -3,21 +3,10 @@ import { access, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promise
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
+import { installPreset, uninstallPreset } from "../src/install-preset.js";
 import { agentPresetsStandardPreset, managedPresetPath, sharedStandardPreset, standardPreset } from "./preset-fixtures.js";
 
-type InstallPresetModule = typeof import("../src/install-preset.js");
-
 let root: string;
-
-async function installPreset(options: Parameters<InstallPresetModule["installPreset"]>[0]): Promise<string> {
-  const module = await import(new URL("../packages/dsh-moneypal/dist/src/install-preset.js", import.meta.url).href) as InstallPresetModule;
-  return module.installPreset(options);
-}
-
-async function uninstallPreset(options: Parameters<InstallPresetModule["uninstallPreset"]>[0]): ReturnType<InstallPresetModule["uninstallPreset"]> {
-  const module = await import(new URL("../packages/dsh-moneypal/dist/src/install-preset.js", import.meta.url).href) as InstallPresetModule;
-  return module.uninstallPreset(options);
-}
 
 before(async () => {
   root = await mkdtemp(join(tmpdir(), "dsh-moneypal-install-"));
