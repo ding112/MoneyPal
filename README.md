@@ -343,6 +343,12 @@ npm run publish:mcp
 
 两个发布命令互不隐含对方；只运行其中一个，就只上传对应的 npm 包。当前发布脚本使用 `next` 标签；安装该预发布版本时，使用 `dsh-moneypal@next` 或 `mcp-moneypal@next` 替换安装命令中的包名。
 
+### GitHub Actions 自动发布
+
+推送版本 bump 提交到 `main` 后，Release 工作流（`.github/workflows/release.yml`）自动执行：`npm run test:release` 门禁 → `npm run release:preflight` → 将两个包发布到 npm `next` 标签 → 打 `v<版本号>` tag → 创建 GitHub Release 并附上两个 tarball 与专家包 zip。tag `v<版本号>` 已存在或 registry 已有该版本时自动跳过；门禁失败修复后重跑即可，不会烧掉版本号。
+
+工作流依赖仓库 secret `NPM_TOKEN`（npm automation token，须同时有 `dsh-moneypal` 与 `mcp-moneypal` 的发布权限），通过 `gh secret set NPM_TOKEN` 配置。工作流始终使用 `next` 标签，绝不改动 `latest`；提升 `latest` 仍按发布验收流程人工执行 `npm run release:promote`。上方本地发布命令保留为备用路径。日常改动由 Test 工作流（`.github/workflows/test.yml`）在 push 与 PR 时运行同一门禁。
+
 ### 开发者文档
 
 DSH/MCP 插件的开发规范（依赖边界、服务访问、注册语义、工具契约、错误边界、验证流程）见 [DSH 插件开发规范](docs/agents/dsh-plugin-development.md)。
