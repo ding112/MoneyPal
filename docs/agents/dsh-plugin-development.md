@@ -97,6 +97,7 @@
 - 本地集成（`npm test`）允许明确跳过缺失真实运行时的 18 项；发布（`npm run test:release`）严格要求真实运行时可用兼容。
 - 发布 UI 验收只在发布前通过 ego-browser skill 执行；日常测试不包含 React/DOM 模拟器或浏览器测试。
 - `npm run test:fast`、`npm test`、`npm run test:release` 三个命令相互包含，不要用它们重复验证同一次修改：按所处阶段选择相应的最高层级即可；单独诊断失败文件时不受此限制。
+- 版本由 Release Please 维护，不要手动改根版本号；Release 工作流只发布已经通过门禁的 tgz（`scripts/publish-release.mjs`），npm 使用 OIDC 发布到 `next` 且不读取 `NPM_TOKEN`，`latest` 保持人工提升；不要新增工作流、绕过门禁或在发布流程里改动 dist-tag。Test 与 Release 工作流都会先执行 `node dist/src/main.js setup-runtime`，因为发布门禁严格要求真实运行时。
 
 ### 发布 UI 验收清单（仅发布前执行）
 

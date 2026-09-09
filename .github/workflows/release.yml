@@ -4,9 +4,17 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      tag:
+        description: 已存在的版本 tag（例如 v1.0.0-rc.4）
+        required: true
+        type: string
 
 permissions:
   contents: write
+  pull-requests: write
+  issues: write
+  id-token: write
 
 concurrency:
   group: release-main
@@ -14,84 +22,173 @@ concurrency:
 
 jobs:
   release:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
-    environment: npm-publish
+    env:
+      TARBALL_DIR: ${{ runner.temp }}/moneypal-release
+      PUBLISH_RESULT: ${{ runner.temp }}/publish-result.json
     steps:
-      - uses: actions/checkout@v4
+      - name: Set up Node and npm registry
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
-          fetch-depth: 0
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
+          node-version: 24
           registry-url: https://registry.npmjs.org/
+          package-manager-cache: false
 
       - name: Install npm per packageManager
         run: npm install -g npm@11.14.1
 
+      - name: Maintain release pull request
+        if: github.event_name == 'push'
+        id: release
+        uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+          target-branch: main
+
+      - name: Checkout release source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || steps.release.outputs.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Resolve release target
+        id: target
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_TAG: ${{ inputs.tag }}
+          RELEASE_CREATED: ${{ steps.release.outputs.release_created }}
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+          RELEASE_TAG: ${{ steps.release.outputs.tag_name }}
+          RELEASE_SHA: ${{ steps.release.outputs.sha }}
+          EVENT_SHA: ${{ github.sha }}
+          TRIGGER_REF: ${{ github.ref }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          echo "publish=false" >> "$GITHUB_OUTPUT"
+          if [ "$EVENT_NAME" = "push" ]; then
+            if [ "$RELEASE_CREATED" != "true" ]; then
+              echo "::notice::Release Please 本次没有创建新版本，跳过发布。"
+              exit 0
+            fi
+            tag="$RELEASE_TAG"
+            version="$RELEASE_VERSION"
+            sha="$RELEASE_SHA"
+            if [ "$tag" != "v$version" ]; then
+              echo "::error::Release Please 输出的 tag（$tag）与版本（$version）不一致。"
+              exit 1
+            fi
+            if [ "$RELEASE_SHA" != "$EVENT_SHA" ]; then
+              echo "::error::发布提交 $RELEASE_SHA 与本次事件提交 $EVENT_SHA 不一致；请用 tag 手动重试：gh workflow run release.yml --ref $tag -f tag=$tag"
+              exit 1
+            fi
+          else
+            tag="$INPUT_TAG"
+            if [ "$TRIGGER_REF" != "refs/tags/$tag" ]; then
+              echo "::error::手动重试必须以该 tag 作为运行 ref：gh workflow run release.yml --ref $tag -f tag=$tag"
+              exit 1
+            fi
+            if ! git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+              echo "::error::tag $tag 不存在。"
+              exit 1
+            fi
+            if ! gh release view "$tag" >/dev/null; then
+              echo "::error::GitHub Release $tag 不存在。"
+              exit 1
+            fi
+            sha="$(git rev-parse "$tag^{commit}")"
+            if ! git merge-base --is-ancestor "$sha" origin/main; then
+              echo "::error::tag $tag 指向的提交不在 main 历史中。"
+              exit 1
+            fi
+            version="${tag#v}"
+          fi
+          if [ "$(git rev-parse HEAD)" != "$(git rev-parse "$tag^{commit}")" ]; then
+            echo "::error::checkout 的提交与 tag $tag 解析出的提交不一致。"
+            exit 1
+          fi
+          root_version="$(node -p 'require("./package.json").version')"
+          manifest_version="$(node -p 'require("./.release-please-manifest.json")["."]')"
+          if [ "$root_version" != "$version" ]; then
+            echo "::error::根清单版本 $root_version 与发布版本 $version 不一致。"
+            exit 1
+          fi
+          if [ "$manifest_version" != "$version" ]; then
+            echo "::error::Release Please manifest 版本 $manifest_version 与发布版本 $version 不一致。"
+            exit 1
+          fi
+          VERSION="$version" node -e '
+            const parse = (value) => {
+              const match = /^(\d+)\.(\d+)\.(\d+)(?:-rc\.(\d+))?$/u.exec(value);
+              if (!match) return null;
+              return { major: Number(match[1]), minor: Number(match[2]), patch: Number(match[3]), rc: match[4] === undefined ? Number.POSITIVE_INFINITY : Number(match[4]) };
+            };
+            const compare = (left, right) => left.major - right.major || left.minor - right.minor || left.patch - right.patch || left.rc - right.rc;
+            const version = parse(process.env.VERSION ?? "");
+            const floor = parse("1.0.0-rc.3");
+            if (!version || compare(version, floor) <= 0) {
+              console.log(`::error::只允许发布 1.0.0-rc.3 之后的版本，当前为 ${process.env.VERSION}。`);
+              process.exit(1);
+            }
+          '
+          {
+            echo "publish=true"
+            echo "tag=$tag"
+            echo "version=$version"
+            echo "sha=$sha"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Install dependencies
+        if: steps.target.outputs.publish == 'true'
         run: npm ci
 
-      - name: Determine release state
-        run: |
-          version="$(jq -r .version package.json)"
-          echo "VERSION=$version" >> "$GITHUB_ENV"
-          if git rev-parse -q --verify "refs/tags/v$version" >/dev/null 2>&1; then
-            echo "::notice::tag v$version 已存在，视为已发布，本次跳过"
-            echo "SKIP=true" >> "$GITHUB_ENV"
-          else
-            echo "SKIP=false" >> "$GITHUB_ENV"
-          fi
+      - name: Prepare MoneyPal runtime
+        if: steps.target.outputs.publish == 'true'
+        run: npm run build:base && node dist/src/main.js setup-runtime
 
-      - name: Release test gates
-        if: env.SKIP != 'true'
+      - name: Release gates and keep accepted tarballs
+        if: steps.target.outputs.publish == 'true'
+        env:
+          MONEYPAL_TARBALL_OUTPUT: ${{ env.TARBALL_DIR }}
         run: npm run test:release
 
       - name: Release preflight
-        if: env.SKIP != 'true'
+        if: steps.target.outputs.publish == 'true'
         run: npm run release:preflight
 
-      - name: Publish dsh-moneypal
-        if: env.SKIP != 'true'
-        run: |
-          if npm view "dsh-moneypal@$VERSION" version >/dev/null 2>&1; then
-            echo "::notice::dsh-moneypal@$VERSION 已在 registry，跳过发布"
-          else
-            npm run publish:dsh
-          fi
+      - name: Publish accepted tarballs to npm next
+        if: steps.target.outputs.publish == 'true'
+        run: node scripts/publish-release.mjs --dir "$TARBALL_DIR" | tee "$PUBLISH_RESULT"
+
+      - name: Summarize release
+        if: always()
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-
-      - name: Publish mcp-moneypal
-        if: env.SKIP != 'true'
+          RESULT_FILE: ${{ env.PUBLISH_RESULT }}
+          RELEASE_VERSION: ${{ steps.target.outputs.version }}
+          RELEASE_TAG: ${{ steps.target.outputs.tag }}
+          RELEASE_SHA: ${{ steps.target.outputs.sha }}
+          EVENT_NAME: ${{ github.event_name }}
+          JOB_STATUS: ${{ job.status }}
         run: |
-          if npm view "mcp-moneypal@$VERSION" version >/dev/null 2>&1; then
-            echo "::notice::mcp-moneypal@$VERSION 已在 registry，跳过发布"
-          else
-            npm run publish:mcp
-          fi
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-
-      - name: Stage release artifacts
-        if: env.SKIP != 'true'
-        run: |
-          mkdir -p release-artifacts
-          npm pack ./dist/packages/dsh-moneypal --pack-destination release-artifacts
-          npm pack ./dist/packages/mcp-moneypal --pack-destination release-artifacts
-          cp dist/experts/moneypal.zip release-artifacts/
-
-      - name: Create GitHub Release
-        if: env.SKIP != 'true'
-        run: gh release create "v$VERSION" --target "$GITHUB_SHA" --generate-notes --title "v$VERSION" release-artifacts/*
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Upload release artifacts
-        if: env.SKIP != 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: release-artifacts-v${{ env.VERSION }}
-          path: release-artifacts/
+          {
+            echo "## MoneyPal 发布"
+            echo ""
+            echo "| 项目 | 值 |"
+            echo "| --- | --- |"
+            echo "| 触发 | \`$EVENT_NAME\` |"
+            echo "| 版本 | \`${RELEASE_VERSION:-未发布}\` |"
+            echo "| tag | \`${RELEASE_TAG:-无}\` |"
+            echo "| 源码 SHA | \`${RELEASE_SHA:-${{ github.sha }}}\` |"
+            echo "| 结果 | \`$JOB_STATUS\` |"
+            echo ""
+            if [ -f "$RESULT_FILE" ]; then
+              echo "| 包 | 结果 | integrity |"
+              echo "| --- | --- | --- |"
+              node -e 'const fs = require("node:fs"); const report = JSON.parse(fs.readFileSync(process.env.RESULT_FILE, "utf8")); for (const item of report.packages) { console.log(`| \`${item.name}\` | ${item.status === "published" ? "已发布" : "已存在，跳过"} | \`${item.integrity}\` |`); }'
+            else
+              echo "本次没有生成发布结果：未进入发布步骤，或发布脚本在写出结果前失败。"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

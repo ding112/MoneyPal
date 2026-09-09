@@ -1,6 +1,32 @@
 import assert from "node:assert/strict";
 import { access, readFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
 import { test } from "node:test";
+
+const workspace = fileURLToPath(new URL("../..", import.meta.url));
+const candidate = /^\d+\.\d+\.\d+(?:-rc\.\d+)?$/u;
+
+async function readJson(path: string): Promise<Record<string, any>> {
+  return JSON.parse(await readFile(path, "utf8")) as Record<string, any>;
+}
+
+test("根版本与 lockfile、两个生成包、Release Please manifest 始终一致", async () => {
+  const packageJson = await readJson(`${workspace}/package.json`);
+  const version = String(packageJson.version ?? "");
+  assert.match(version, candidate, "根版本必须符合 X.Y.Z 或 X.Y.Z-rc.N 格式。");
+
+  const lockfile = await readJson(`${workspace}/package-lock.json`);
+  assert.equal(lockfile.version, version, "package-lock.json 顶层版本必须与根版本一致。");
+  assert.equal(lockfile.packages?.[""]?.version, version, "package-lock.json 的 packages[\"\"] 版本必须与根版本一致。");
+
+  for (const name of ["dsh-moneypal", "mcp-moneypal"]) {
+    const manifest = await readJson(`${workspace}/dist/packages/${name}/package.json`);
+    assert.equal(manifest.version, version, `${name} 的生成包版本必须与根版本一致。`);
+  }
+
+  const releasePlease = await readJson(`${workspace}/.release-please-manifest.json`);
+  assert.equal(releasePlease["."], version, "Release Please manifest 的根组件版本必须与根版本一致。");
+});
 
 test("发布脚本默认把候选发到 next，绝不无标记覆盖 latest", async () => {
   const packageJson = JSON.parse(await readFile(new URL("../../package.json", import.meta.url), "utf8")) as { scripts?: Record<string, string> };
