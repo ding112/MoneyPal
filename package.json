@@ -1,6 +1,6 @@
 {
   "name": "moneypal-workspace",
-  "version": "1.0.0-rc.5",
+  "version": "1.0.0-rc.6",
   "private": true,
   "type": "module",
   "description": "MoneyPal 的 DSH 与 MCP npm 包工作区。",
