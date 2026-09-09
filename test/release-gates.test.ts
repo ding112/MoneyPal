@@ -14,7 +14,7 @@ test("发布门禁以 RC 版本、预检、tarball 验收和机器可读记录�
     scripts?: Record<string, string>;
   };
 
-  assert.equal(packageJson.version, "1.0.0-rc.2");
+  assert.equal(packageJson.version, "1.0.0-rc.3");
   const lockfile = JSON.parse(await readFile(new URL("../../package-lock.json", import.meta.url), "utf8")) as { version?: string; packages?: Record<string, { version?: string }> };
   assert.equal(lockfile.version, packageJson.version);
   assert.equal(lockfile.packages?.[""].version, packageJson.version);
