@@ -17,7 +17,7 @@ async function buildDshPackage() {
   await copy(join(workspace, "src", "finance", "bridge.py"), join(target, "dist", "src", "finance", "bridge.py"));
   await rm(join(target, "dist", "src", "mcp"), { recursive: true, force: true });
   await removeStem(join(target, "dist", "src"), "mcp-main");
-  await copy(join(workspace, "cordis.patch.yml"), join(target, "cordis.patch.yml"));
+  await copy(join(workspace, "packages", "dsh-moneypal", "cordis.patch.yml"), join(target, "cordis.patch.yml"));
   await sanitizePublishedJavaScript(join(target, "dist", "src"));
   await chmod(join(target, "dist", "src", "main.js"), 0o755);
 }
@@ -39,10 +39,13 @@ async function buildMcpPackage() {
 
 async function writePackageFiles(name, target) {
   const source = join(workspace, "packages", name);
-  const template = JSON.parse(await readFile(join(source, "package.template.json"), "utf8"));
+  // DSH 子包清单同时是市场目录的发现入口，必须是真实的 package.json；
+  // MCP 子包仍用模板，因为它的包名不与仓库名共享发现路径。
+  const manifestFile = name === "dsh-moneypal" ? "package.json" : "package.template.json";
+  const manifest = JSON.parse(await readFile(join(source, manifestFile), "utf8"));
   await mkdir(target, { recursive: true });
   await Promise.all([
-    writeFile(join(target, "package.json"), `${JSON.stringify({ ...template, version: workspacePackage.version }, null, 2)}\n`, "utf8"),
+    writeFile(join(target, "package.json"), `${JSON.stringify({ ...manifest, version: workspacePackage.version }, null, 2)}\n`, "utf8"),
     copy(join(source, "README.md"), join(target, "README.md")),
   ]);
 }
