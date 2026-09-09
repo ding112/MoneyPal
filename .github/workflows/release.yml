@@ -158,7 +158,9 @@ jobs:
 
       - name: Publish accepted tarballs to npm next
         if: steps.target.outputs.publish == 'true'
-        run: node scripts/publish-release.mjs --dir "$RUNNER_TEMP/moneypal-release" | tee "$RUNNER_TEMP/publish-result.json"
+        run: |
+          set -o pipefail
+          node scripts/publish-release.mjs --dir "$RUNNER_TEMP/moneypal-release" | tee "$RUNNER_TEMP/publish-result.json"
 
       - name: Summarize release
         if: always()
@@ -181,10 +183,10 @@ jobs:
             echo "| 源码 SHA | \`${RELEASE_SHA:-${{ github.sha }}}\` |"
             echo "| 结果 | \`$JOB_STATUS\` |"
             echo ""
-            if [ -f "$RESULT_FILE" ]; then
+            if [ -s "$RESULT_FILE" ]; then
               echo "| 包 | 结果 | integrity |"
               echo "| --- | --- | --- |"
-              node -e 'const fs = require("node:fs"); const report = JSON.parse(fs.readFileSync(process.env.RESULT_FILE, "utf8")); for (const item of report.packages) { console.log(`| \`${item.name}\` | ${item.status === "published" ? "已发布" : "已存在，跳过"} | \`${item.integrity}\` |`); }'
+              node -e 'const fs = require("node:fs"); let report; try { report = JSON.parse(fs.readFileSync(process.env.RESULT_FILE, "utf8")); } catch { console.log("发布结果文件无法解析；请查看发布步骤日志。"); process.exit(0); } for (const item of report.packages) { console.log(`| \`${item.name}\` | ${item.status === "published" ? "已发布" : "已存在，跳过"} | \`${item.integrity}\` |`); }'
             else
               echo "本次没有生成发布结果：未进入发布步骤，或发布脚本在写出结果前失败。"
             fi

@@ -10,8 +10,9 @@ import { promisify } from "node:util";
 
 export const registry = "https://registry.npmjs.org/";
 export const releasePackages = ["dsh-moneypal", "mcp-moneypal"];
-const verifyAttempts = 3;
-const verifyDelayMs = 2000;
+// registry 接受发布后，packument 对新版本仍可能滞后数秒；复验最多 6 次、间隔 5 秒（最长 30 秒）。
+const verifyAttempts = 6;
+const verifyDelayMs = 5000;
 
 export function tarballIntegrity(value) { return `sha512-${createHash("sha512").update(value).digest("base64")}`; }
 
@@ -68,7 +69,7 @@ export async function publishRelease({
 async function registryState(item, { exec, version }) {
   let stdout;
   try {
-    ({ stdout } = await exec("npm", ["view", `${item.name}@${version}`, "version", "dist", "--json", "--registry", registry], {}));
+    ({ stdout } = await exec("npm", ["view", `${item.name}@${version}`, "version", "dist", "--json", "--prefer-online", "--registry", registry], {}));
   } catch (error) {
     if (isNotFound(error)) return { status: "missing" };
     throw new Error(`查询 ${item.name}@${version} 失败：${describe(error)}。`);
