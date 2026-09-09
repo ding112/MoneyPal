@@ -1,6 +1,7 @@
 // 稳定版提升门禁：先对 registry 上已发布的稳定版本做复验，通过后才允许把 latest 提升到该版本。
 // 默认只输出待执行的 dist-tag 命令（dry-run）；显式传入 --apply 才真正修改 latest。
-// 任何复验失败都以非零状态停止，绝不修改 latest。RC 版本（含 "-rc."）禁止进入本流程。
+// 任何复验失败都以非零状态停止，绝不修改 latest。只有完整稳定版本（X.Y.Z）可以进入本流程。
+// 两次 dist-tag 更新不是原子操作：部分失败时按实际结果报错，不输出整体成功。
 import { execFile } from "node:child_process";
 import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -19,14 +20,14 @@ const unknown = args.filter((arg) => arg !== "--apply");
 if (unknown.length) throw new Error(`未知参数：${unknown.join(" ")}；仅支持 --apply。`);
 
 const rootPackage = JSON.parse(await readFile(join(root, "package.json"), "utf8"));
-assert(!rootPackage.version.includes("-rc."), `提升只允许稳定版本，当前为 ${rootPackage.version}。`);
+assert(/^\d+\.\d+\.\d+$/u.test(rootPackage.version), `提升只允许稳定版本，当前为 ${rootPackage.version}。`);
 
 const temporary = await mkdtemp(join(tmpdir(), "moneypal-promote-"));
 const npmEnv = { ...process.env, npm_config_cache: join(temporary, "npm-cache") };
 try {
   const results = [];
   for (const name of packages) {
-    const manifest = await view(name);
+    const { manifest } = await view(name);
     assert(String(manifest.version) === rootPackage.version, `${name} 的 registry 版本应为 ${rootPackage.version}，实际为 ${manifest.version}。`);
 
     const tarball = await pack(name);
@@ -54,12 +55,34 @@ try {
   assert(results[0].sha256 === (await localBridgeHash()), "registry 稳定包与本地构建的 canonical bridge 不一致；请确认稳定发布与已验证 RC 来源一致。");
 
   const commands = packages.map((name) => `npm dist-tag add ${name}@${rootPackage.version} latest`);
-  console.log(JSON.stringify({ ok: true, version: rootPackage.version, packages: results, action: apply ? "applied" : "dry-run", ...(apply ? {} : { next: commands }) }, null, 2));
-  if (apply) {
-    for (const name of packages) await exec("npm", ["dist-tag", "add", `${name}@${rootPackage.version}`, "latest"], { env: npmEnv });
-    const after = await Promise.all(packages.map(view));
-    after.forEach(({ name, manifest }) => assert(manifest["dist-tags"]?.latest === rootPackage.version, `${name} 的 latest 未生效，实际为 ${manifest["dist-tags"]?.latest}。`));
-    console.log(JSON.stringify({ ok: true, action: "applied", verified: after.map(({ name, manifest }) => ({ name, latest: manifest["dist-tags"].latest })) }, null, 2));
+  if (!apply) {
+    console.log(JSON.stringify({ ok: true, version: rootPackage.version, packages: results, action: "dry-run", next: commands }, null, 2));
+  } else {
+    const applied = [];
+    const failed = [];
+    for (const name of packages) {
+      try {
+        await exec("npm", ["dist-tag", "add", `${name}@${rootPackage.version}`, "latest"], { env: npmEnv });
+        applied.push(name);
+      } catch (error) {
+        failed.push({ name, message: error instanceof Error ? error.message : String(error) });
+      }
+    }
+    if (failed.length) {
+      console.error(JSON.stringify({
+        ok: false,
+        action: "apply-failed",
+        version: rootPackage.version,
+        applied,
+        failed,
+        note: "dist-tag 更新不是原子操作：已成功的包不会回滚，请核对两个包的 latest 后再重试。",
+      }, null, 2));
+      process.exitCode = 1;
+    } else {
+      const after = await Promise.all(packages.map(view));
+      after.forEach(({ name, manifest }) => assert(manifest["dist-tags"]?.latest === rootPackage.version, `${name} 的 latest 未生效，实际为 ${manifest["dist-tags"]?.latest}。`));
+      console.log(JSON.stringify({ ok: true, version: rootPackage.version, action: "applied", verified: after.map(({ name, manifest }) => ({ name, latest: manifest["dist-tags"].latest })) }, null, 2));
+    }
   }
 } finally {
   await rm(temporary, { recursive: true, force: true });
