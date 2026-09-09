@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
-    types: [opened, synchronize, reopened, edited]
+    types: [opened, synchronize, reopened]
 
 permissions:
   contents: read
@@ -33,23 +33,11 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Check pull request title
-        if: github.event_name == 'pull_request'
-        env:
-          PR_TITLE: ${{ github.event.pull_request.title }}
-        run: |
-          node -e '
-            const pattern = /^(feat|fix|docs|refactor|perf|test|build|ci|chore|revert)(\([^()]*\))?!?: .+/u;
-            const title = process.env.PR_TITLE ?? "";
-            if (!pattern.test(title)) {
-              console.log("::error::PR 标题必须符合 Conventional Commits（例如 fix(ci): 说明），当前标题不匹配。");
-              process.exit(1);
-            }
-            console.log("PR 标题格式通过。");
-          '
+      - name: Build once
+        run: npm run build
 
       - name: Prepare MoneyPal runtime
-        run: npm run build:base && node dist/src/main.js setup-runtime
+        run: node dist/src/main.js setup-runtime
 
       - name: Release gates
-        run: npm run test:release
+        run: npm run verify:release:built

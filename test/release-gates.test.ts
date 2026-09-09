@@ -11,7 +11,7 @@ async function readJson(path: string): Promise<Record<string, any>> {
   return JSON.parse(await readFile(path, "utf8")) as Record<string, any>;
 }
 
-test("根版本与 lockfile、两个生成包、Release Please manifest 始终一致", async () => {
+test("根版本与 lockfile、两个生成包始终一致", async () => {
   const packageJson = await readJson(`${workspace}/package.json`);
   const version = String(packageJson.version ?? "");
   assert.match(version, candidate, "根版本必须符合 X.Y.Z 或 X.Y.Z-rc.N 格式。");
@@ -24,9 +24,23 @@ test("根版本与 lockfile、两个生成包、Release Please manifest 始终�
     const manifest = await readJson(`${workspace}/dist/packages/${name}/package.json`);
     assert.equal(manifest.version, version, `${name} 的生成包版本必须与根版本一致。`);
   }
+});
 
-  const releasePlease = await readJson(`${workspace}/.release-please-manifest.json`);
-  assert.equal(releasePlease["."], version, "Release Please manifest 的根组件版本必须与根版本一致。");
+test("发布验收链路只构建一次、保留真实打包且不含 dry-run", async () => {
+  const packageJson = await readJson(`${workspace}/package.json`);
+  const scripts = (packageJson.scripts ?? {}) as Record<string, string>;
+  const built = scripts["verify:release:built"] ?? "";
+  const release = scripts["test:release"] ?? "";
+
+  assert.match(built, /run-release-tests\.mjs/u, "验收链路必须包含发布测试包装。");
+  assert.match(built, /release:tarballs:built/u, "验收链路必须包含真实 tarball 打包与隔离安装。");
+  assert.doesNotMatch(built, /npm run build/u, "verify:release:built 不构建，要求调用方已完成构建。");
+
+  assert.match(release, /npm run build/u);
+  assert.match(release, /npm run verify:release:built/u);
+  assert.doesNotMatch(release, /pack:check/u, "dry-run 打包检查已移出正式验收链路。");
+  assert.equal((release.match(/npm run build\b/gu) ?? []).length, 1, "正式验收链路只完整构建一次。");
+  for (const name of ["pack:check", "pack:check:built"]) assert.ok(scripts[name], `${name} 必须保留供手工排查。`);
 });
 
 test("发布脚本默认把候选发到 next，绝不无标记覆盖 latest", async () => {

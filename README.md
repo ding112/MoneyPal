@@ -331,6 +331,7 @@ dsh plugin --profile web exec dsh-moneypal install-preset
 - 本地集成允许明确跳过缺失真实运行时的 18 项；发布严格要求真实运行时可用兼容。
 - 发布 UI 验收只在发布前通过 ego-browser skill 执行（清单见 DSH 插件开发规范“验证流程”）；日常测试不包含 React/DOM 模拟器或浏览器测试。
 - `npm run test:fast`、`npm test`、`npm run test:release` 三个命令相互包含，不要用它们重复验证同一次修改：按所处阶段选择相应的最高层级即可；单独诊断失败文件时不受此限制。
+- `npm run test:release` 只完整构建一次，随后执行 `npm run verify:release:built`（发布测试 + 真实 tarball 打包、内容检查、隔离安装与入口加载）。`verify:release:built` 自身不构建、不安装运行时，要求调用方已完成 `npm run build` 与 `node dist/src/main.js setup-runtime`；`pack:check` 与 `pack:check:built` 只作手工排查，不在正式验收链路里。
 
 ### WorkBuddy 专家包：恰恰账本
 
@@ -354,26 +355,23 @@ npm run publish:mcp
 
 ### GitHub Actions 自动发布
 
-功能 PR 通过 Test 后以 squash 方式合并到 `main`（提交标题取 PR 标题），随后按以下流程发布：
+版本改动经过审查，合入 `main` 后由维护者手动打 tag，Release 工作流据此自动发布：
 
-1. Release 工作流在 `main` push 时运行 Release Please，自动维护 Release PR：更新根 `package.json` 版本、`package-lock.json`、`.release-please-manifest.json` 和 `CHANGELOG.md`。这一步不发布任何包。
-2. 维护者关闭再重新打开 Release PR 触发 Test。`GITHUB_TOKEN` 创建的 PR 不会触发其他工作流，所以必须人工关闭再打开；机器人更新 PR 后，要对更新后的提交重新执行此操作。
-3. Test 通过后合并 Release PR，Release Please 创建 `v<版本号>` tag 和 GitHub Release（RC 标记为 Prerelease）。
-4. Release 工作流从该版本 SHA 重新执行 `npm run test:release` 与 `npm run release:preflight`，保留已验收的两个 tgz，并按 DSH、MCP 顺序发布到 npm `next`。工作流结果就是 npm 是否成功的唯一依据。
+1. 用 `npm version <明确版本> --no-git-tag-version` 更新根版本（版本形如 `X.Y.Z` 或 `X.Y.Z-rc.N`）。该命令更新根 `package.json` 与 `package-lock.json`，不自动提交、不打 tag。
+2. 审查差异，提交 PR，经 Test 通过后以 squash 方式合并到 `main`，然后获取最新 `main`。
+3. 对已合入的版本提交创建 annotated tag：`git tag -a v<版本> <提交SHA> -m "v<版本>"`。
+4. 只推送本次 tag：`git push origin refs/tags/v<版本>`，不要使用 `git push --tags`。
+5. Release 工作流在 tag push 时校验 tag 与源码，`npm ci` → 完整构建一次 → `node dist/src/main.js setup-runtime` → `npm run verify:release:built`（真实打包、内容检查、隔离安装与入口加载）→ `npm run release:preflight`，最后按 DSH、MCP 顺序把本次验收过的两个 tgz 发布到 npm `next`。工作流结果就是 npm 是否成功的唯一依据。
 
-两个工作流都会先执行 `node dist/src/main.js setup-runtime` 准备 MoneyPal 托管运行时：发布门禁要求真实运行时可用且兼容，缺少运行时的环境会明确失败，而不是跳过用例。
+`CHANGELOG.md` 只保留历史内容，后续发布说明手工维护，不再有自动 changelog。
+
+两个工作流都会在完整构建一次后执行 `node dist/src/main.js setup-runtime` 准备 MoneyPal 托管运行时：发布门禁要求真实运行时可用且兼容，缺少运行时的环境会明确失败，而不是跳过用例。
 
 npm 发布使用 OIDC Trusted Publishing，不读取 `NPM_TOKEN`；工作流始终使用 `next` 标签，`latest` 仍由人运行 `npm run release:promote` 提升。
 
-发布失败时用 tag 重试，例如：
+发布失败时在新 tag 工作流的原运行中选择 **Re-run failed jobs**，不要重新推送、删除或移动 tag。已经存在于 registry 且字节一致的包会安全跳过，因此第二包失败后重试只发布缺失的包；若重试发现已发布包与重新生成的产物不同，停止并发布新版本，不绕过完整性检查。
 
-```bash
-gh workflow run release.yml --ref v1.0.0-rc.4 -f tag=v1.0.0-rc.4
-```
-
-手动重试只接受已经存在的 tag 与 GitHub Release，并要求该 tag 的提交在 `main` 历史中、版本与根清单和 manifest 一致。已经存在于 registry 且字节一致的包会安全跳过，因此第二包失败后重试只发布缺失的包。Release Please 只在创建 Release 的那次返回 `release_created=true`，所以不要依赖“重跑旧的 run”恢复发布，统一使用上面的 tag 重试入口。
-
-日常改动由 Test 工作流（`.github/workflows/test.yml`）在 `main` push 与 PR 的 `opened`、`synchronize`、`reopened`、`edited` 事件上运行：校验 PR 标题格式并执行 `npm run test:release`。
+日常改动由 Test 工作流（`.github/workflows/test.yml`）在 `main` push 与 PR 的 `opened`、`synchronize`、`reopened` 事件上运行：`npm ci` → `npm run build` → `setup-runtime` → `npm run verify:release:built`。
 
 首次上线步骤与维护者一次性配置见 [1.0.0 发布验收记录](docs/releases/1.0.0-acceptance.md)。
 
