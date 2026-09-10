@@ -11,12 +11,12 @@ window.__ModuleLoader__.load({ id: "dsh-moneypal", factory: (require) => {
   /* ═══ 文案：单一来源字典，注册到宿主 locale 命名空间，跟随宿主语言切换 ═══ */
   const LOCALE_NS = "dsh-moneypal.balance";
   const ZH = {
-    "entry.aria": "查看账户余额",
-    "drawer.title": "账户余额",
+    "entry.aria": "查看资产负债概览",
+    "drawer.title": "资产负债概览",
     "drawer.asOf": "截至 {date}",
     "drawer.refresh": "刷新余额",
-    "drawer.close": "关闭账户余额",
-    "drawer.label": "账户余额",
+    "drawer.close": "关闭资产负债概览",
+    "drawer.label": "资产负债概览",
     "tabs.label": "余额视图",
     "tab.overview": "概览",
     "tab.details": "明细",
@@ -55,12 +55,12 @@ window.__ModuleLoader__.load({ id: "dsh-moneypal", factory: (require) => {
     "status.lastSuccess": "上次成功 {time}",
   };
   const EN = {
-    "entry.aria": "View account balances",
-    "drawer.title": "Account Balances",
+    "entry.aria": "View assets and liabilities",
+    "drawer.title": "Assets & Liabilities",
     "drawer.asOf": "As of {date}",
     "drawer.refresh": "Refresh balances",
-    "drawer.close": "Close account balances",
-    "drawer.label": "Account balances",
+    "drawer.close": "Close assets and liabilities",
+    "drawer.label": "Assets and liabilities",
     "tabs.label": "Balance view",
     "tab.overview": "Overview",
     "tab.details": "Details",
@@ -144,7 +144,7 @@ window.__ModuleLoader__.load({ id: "dsh-moneypal", factory: (require) => {
     return new Intl.DateTimeFormat(locale, { year: "numeric", month: "2-digit", day: "2-digit", timeZone: "UTC" }).format(date);
   };
 
-  /* 入口：通用“打开右侧面板”图标按钮（原生 SVG，不引入图标库）；
+  /* 入口：财务语义明确的钱包图标按钮，避免与宿主“打开右栏”图标混淆（原生 SVG，不引入图标库）；
    * 不显示文字，title 与 aria-label 均为本地化提示，aria-expanded 恒为 false（展开时入口隐藏）。 */
   function Entry({ t, onActivate }) {
     return React.createElement("button", {
@@ -153,8 +153,9 @@ window.__ModuleLoader__.load({ id: "dsh-moneypal", factory: (require) => {
       "aria-controls": DRAWER_ID, "aria-expanded": false,
       onClick: (event) => onActivate(event),
     }, React.createElement("svg", { viewBox: "0 0 24 24", "aria-hidden": "true" },
-      React.createElement("rect", { x: "3", y: "3", width: "18", height: "18", rx: "2.5" }),
-      React.createElement("line", { x1: "15", y1: "3", x2: "15", y2: "21" })));
+      React.createElement("path", { d: "M20 7V5a2 2 0 0 0-2-2H5a4 4 0 0 0 0 8h15" }),
+      React.createElement("path", { d: "M5 7h15a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a4 4 0 0 1-4-4V7" }),
+      React.createElement("path", { d: "M16 13h6v4h-6a2 2 0 0 1 0-4Z" })));
   }
   function Amount({ amount, liability, warning, t, locale }) {
     if (!amount) return React.createElement("span", { className: cls("amount", "amount-empty") }, "—");

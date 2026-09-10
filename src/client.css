@@ -74,7 +74,7 @@
   .dsh-moneypal-balance-backdrop { display: none; }
 }
 
-/* 右侧工具区余额入口：通用“打开右侧面板”图标幽灵按钮（原生 SVG，无文字）。
+/* 右侧工具区资产负债概览入口：钱包图标幽灵按钮（原生 SVG，无文字），与宿主右栏图标保持语义区分。
  * 入口位于宿主标题栏工具区、不在抽屉 DOM 内，所需局部颜色变量必须在此重新声明并映射 DSH token，
  * 不得引用仅 .drawer 上定义的变量。 */
 .dsh-moneypal-balance-entry {
