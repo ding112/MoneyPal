@@ -46,6 +46,8 @@ test("DSH 客户端可解析包元数据与客户端入口", async () => {
   assert.equal(packageJson.exports["./host"], undefined);
   assert.ok(packageJson.exports["./client"]);
   assert.ok(packageJson.dsh.client);
+  const patch = await readFile(new URL("../packages/dsh-moneypal/cordis.patch.yml", import.meta.url), "utf8");
+  assert.match(patch, /- id: connection\n  inject:\n    - webRuntime\n    - webServer(?:\n|$)/u, "connection 必须声明 RPC 注册实际使用的 webServer 服务。");
 });
 
 test("发布包的根入口导出可调用的宿主装配契约", async () => {
