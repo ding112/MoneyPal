@@ -1,22 +1,23 @@
 ---
 name: mcp-moneypal
-description: 通过 MoneyPal MCP 财务工具查询和记账用户的正式账本。当用户要查流水、余额、损益表、资产负债表、可用账户，校验账本，要求记账，或首次使用时需要检查并准备 mcp-moneypal 与 MoneyPal 运行时时使用；包含绝对日期换算和先预览、经用户确认、再提交的写入协议。
+description: 通过 MoneyPal MCP 财务工具查询、校验和记账用户的正式账本；在首次使用或要求入门教学时，逐步引导准备环境、连接账本、首次查询与真实交易记账；在工具不可用时协助恢复连接和运行时。记账遵循先预览、用户确认、再提交。
 ---
 
 # MoneyPal MCP 财务工具
 
-你通过 MCP 财务工具访问用户本机的正式账本（账本工作区由 MCP 宿主配置，不在对话中传路径）。工具分两类：
+你通过 MCP 财务工具访问用户本机的正式账本（账本工作区由 MCP 宿主配置，财务工具参数不传路径；首次配置时可向用户确认路径）。工具分两类：
 
 - 六个只读工具：查流水（finance_query_register）、余额（finance_get_balance）、损益表、资产负债表、声明账户列表（finance_list_accounts）、整本校验（finance_validate_journal）。
 - 两个写入工具：finance_preview_transactions 生成预览批次，finance_commit_transactions 提交批次。
 
 每个成功响应都带 `serverToday`（服务器本机时区当日，YYYY-MM-DD）。
 
-## 环境就绪门
+## 选择流程
 
-- 当前工具集中已有 `finance_*` 工具时，MCP 已连接；直接使用工具，不重复检查或安装 `mcp-moneypal`。
-- `finance_*` 工具不可见，或工具返回 `runtime_unavailable` 时，读取并执行 [MCP 与 MoneyPal 启动检查](references/bootstrap.md) 中对应的分支。一次对话内已验证就绪后不重复检查。
-- `invalid_workspace` 和 `invalid_ledger_layout` 表示 MCP 已运行但配置或账本布局有误，不属于缺少安装；按错误消息修复，不重装软件。
+- 用户说明首次使用、询问如何开始或要求一步步教学时，读取 [首次使用引导](references/onboarding.md)，由助手操作、边做边教。已有可用环境也可以直接学习查询和记账。
+- 用户有明确查询或记账需求时，直接按下方规则处理；不要仅因是新对话就强制培训。
+- 工具按需加载的宿主，先使用其工具发现能力查找 MoneyPal 工具。已有可调用的 MoneyPal `finance_*` 工具表示 MCP 已连接，直接调用，不重复安装；工具可见不代表运行时和账本已有效。
+- 工具发现后仍不可用，或返回 `runtime_unavailable`、`invalid_workspace`、`invalid_ledger_layout` 时，读取 [MCP 与 MoneyPal 启动检查](references/bootstrap.md) 的对应分支；恢复后继续原任务，不重新开始整套教学。一次对话内已验证就绪后不重复检查，除非出现新错误或用户切换环境。
 
 ## 财务日期规则
 
@@ -54,10 +55,11 @@ description: 通过 MoneyPal MCP 财务工具查询和记账用户的正式账�
 - `preview_stale`：预览后账本被改动（可能来自 DSH Web 或另一台机器）；先重新查询，再生成新预览并重新确认。
 - `undeclared_account`：账户未在 accounts.beancount 中声明；请用户先做账本维护或改用已声明账户，不要尝试其他写法绕过。
 - `ledger_locked`：另一笔写入进行中；稍后重试，不要并行重试。
-- `runtime_unavailable`：执行环境就绪门的 MoneyPal 运行时准备分支，完成后再重试原操作。
-- `invalid_workspace` / `invalid_ledger_layout`：按错误消息检查 MCP 宿主配置或账本布局，不重装软件。
+- `runtime_unavailable`：按启动检查的运行时分支准备并验证，完成后再重试原操作。
+- `invalid_workspace` / `invalid_ledger_layout`：按启动检查的账本与宿主分支处理，不重装软件。
 
 ## 边界
 
-- 只能通过财务工具读账、写账。账户声明、账本布局、锁文件处理属于账本维护，需用户用标准文件工具完成；不要代改账本文件。
+- 财务查询与交易写入只通过财务工具完成。首次创建新账本可按启动检查，在用户选定路径和已授权范围内调用官方 `mcp-moneypal init`；这不授权手写交易或修改已有账本。
+- 已有账户声明、账本布局、锁文件处理属于账本维护，需用户用标准文件工具完成；不要代改账本文件。启动检查可只读检查目录和布局配置，财务内容仍由财务工具查询。
 - 汇率换算、成本基准、跨商品净值不在工具能力内，如实说明，不要自行折算。
