@@ -5,7 +5,8 @@
 ## 先准备，再带用户操作
 
 - 复用已知宿主信息；不明确时只问当前使用的应用及界面入口。Qoder 办公版、QoderWork 与 Qoder IDE / CLI 的配置入口不同，不混用。
-- 先准备好已验证的启动命令和可直接粘贴的配置。JSON 结构使用 [启动检查第 4 节](bootstrap.md#4-连接宿主并验收)。账本目录由每次工具调用从当前 Agent 任务取得，不写入新连接器配置。
+- 先准备好已验证的启动命令和可直接粘贴的配置。普通全局安装的唯一标准启动方式是命令 `mcp-moneypal`、参数留空；JSON 结构使用 [启动检查第 4 节](bootstrap.md#4-连接宿主并验收)。账本目录由每次工具调用从当前 Agent 任务取得，不写入新连接器配置。
+- 不要把公共命令拆成 Node 可执行文件与包内 JavaScript 入口，不要从宿主的沙箱、内置运行时、npm 缓存或 `node_modules` 拼接路径。这些是非稳定内部路径，不是已安装连接器的配置依据。只有用户明确在开发本仓库源码时，才按仓库开发文档使用 `node` 加已构建入口；不要把该开发配置提供给普通安装用户。
 - 先在连接器列表中找已有 MoneyPal 条目，包括专家包导入的条目。已有时编辑或启用原条目，不重复添加。旧条目若包含 `MONEYPAL_LEDGER_WORKSPACE`，保留用于兼容，不主动增删改。
 - 优先按宿主的连接器界面指导用户。每次只给当前动作、填写内容和完成标志；用户正在操作界面时等待结果。助手具备已授权的界面操作能力时可代为填写；否则提供步骤，不声称已经保存或启用。
 - 页面文字与下方路径不一致时，以实际界面或对应版本官方文档核实下一步；不能操作界面时请用户描述当前选项，不凭空指定按钮。仅在界面不支持或用户明确偏好时使用已核实的配置文件方式。
@@ -15,7 +16,7 @@
 ### WorkBuddy
 
 1. 请用户打开左侧“连接器”，检查是否已有 MoneyPal；需要新增时点击右上角“自定义连接器”。完成标志：进入自定义 MCP 配置界面。
-2. 按下面的填写表配置；界面使用 JSON 编辑器时，提供准备好的完整配置。编辑包含其他服务的配置时仅合并 `moneypal` 条目，保留其他服务。
+2. 按下面的字段配置；界面使用 JSON 编辑器时，优先提供准备好的完整配置。编辑包含其他服务的配置时仅合并 `moneypal` 条目，保留其他服务。
 3. 保存后检查 MoneyPal 的连接状态并启用。若当前版本展示旧版入口，可按官方 MCP 指南进入“插件 → MCP 服务器 → 配置 MCP”。状态异常时读取具体错误，回到启动检查对应阶段。
 
 入口依据：[WorkBuddy 连接器](https://www.codebuddy.cn/docs/workbuddy/From-Beginner-to-Expert-Guide/Function-Description/Connector)、[WorkBuddy MCP](https://www.codebuddy.cn/docs/workbuddy/From-Beginner-to-Expert-Guide/Function-Description/MCP-Guide)。
@@ -23,28 +24,42 @@
 ### Qoder 办公版
 
 1. 打开左侧“扩展（Extensions）→ 连接器（Connectors）”，检查已有条目；新增时进入“添加连接器（Add Connector）→ 自定义 MCP（Add custom MCP）”。
-2. 有表单与 JSON 两种方式：表单按下方填写；JSON 使用已准备的完整配置。核对后点击“Add MCP”。
+2. 有表单与 JSON 两种方式：表单按下方字段填写；JSON 使用已准备的完整配置。核对后点击“Add MCP”。
 3. 检查连接器是否可用及工具列表是否加载，再回到对话做只读验收。
 
 入口依据：[Qoder Connectors](https://docs.qoder.com/qoder/connectors)。此入口不适用于 Qoder IDE / CLI。
 
 ### QoderWork 界面
 
-1. 打开“扩展 → 连接器”，点击右上角“＋ Add”。选择“Paste JSON Config”导入准备好的 JSON，或“Fill in Config Manually”按下表填写。
+1. 打开“扩展 → 连接器”，点击右上角“＋ Add”。选择“Paste JSON Config”导入准备好的 JSON，或“Fill in Config Manually”按下方字段填写。
 2. 导入或添加后，在“Installed → Custom”找到 MoneyPal，确认已启用并展开查看工具。
 3. QoderWork 官方说明，切换连接器启用状态后需新建对话才能生效。让用户在新对话粘贴交接说明，不要求旧对话反复重试或重新安装。
 
 入口与生效规则依据：[QoderWork Connector](https://docs.qoder.com/qoderwork/connectors)。
 
-## MoneyPal 填写内容
+## MoneyPal 标准配置
 
-| 界面字段 | 应填写内容 |
-| --- | --- |
-| 名称 / Server Name | `moneypal`，或沿用已有条目名称 |
-| 类型 / Transport / Server Type | 本地进程 `STDIO` |
-| 命令 / Command | `mcp-moneypal`；宿主找不到命令时使用已验证的可执行文件绝对路径 |
-| 参数 / Arguments（若有独立字段） | 留空；不能填 `init`、`setup-runtime` 或账本路径 |
-| 自定义 Python（已使用时） | 保留环境变量 `MONEYPAL_PYTHON` 及其已验证的绝对路径；托管运行时无需填写 |
+界面支持 JSON 时，优先给出这一份完整配置，不增加 `args`、账本路径或其他字段：
+
+```json
+{
+  "mcpServers": {
+    "moneypal": { "command": "mcp-moneypal" }
+  }
+}
+```
+
+手动表单使用简短列表逐项给出，避免表格在聊天界面中错行：
+
+- 名称：`moneypal`，或沿用已有条目名称
+- 类型：本地进程 `STDIO`
+- 命令：`mcp-moneypal`
+- 参数：留空
+- 自定义 Python：仅在已有配置使用时，保留环境变量 `MONEYPAL_PYTHON` 及其已验证的绝对路径；托管运行时无需填写
+
+展示配置前先自检：命令必须是 `mcp-moneypal`，参数必须为空。不能把 `init`、`setup-runtime`、账本路径、`node.exe` 或 `mcp-main.js` 填入普通用户配置。
+
+只有宿主明确报“找不到命令”时才处理 PATH：POSIX 用 `command -v mcp-moneypal`，Windows PowerShell 用 `(Get-Command mcp-moneypal -ErrorAction Stop).Source`。绝对路径兜底只能使用该命令实际返回并经过执行验证的公共启动器，例如 Windows 的 `mcp-moneypal.cmd`；不得推断或改写为宿主内置的 `node.exe` 和包内脚本路径。如果宿主不能执行已验证的公共启动器，保留具体报错并核实宿主兼容方式，不自行发明替代启动链。
 
 MoneyPal 是本地 stdio 服务，无需填写服务 URL、API Key、OAuth 登录或新的账本环境变量。启动命令不带子命令时才运行 MCP 服务。界面如果只显示 URL 输入，先检查是否选成了远程传输类型，不编造本地 HTTP 地址。
 

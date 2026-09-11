@@ -10,6 +10,7 @@ const exec = promisify(execFile);
 const workspace = fileURLToPath(new URL("../..", import.meta.url));
 const source = join(workspace, "experts", "moneypal");
 const archive = join(workspace, "dist", "experts", "moneypal.zip");
+const skillVersionToken = "${MONEYPAL_VERSION}";
 
 test("恰恰账本专家包具备 WorkBuddy 必填市场字段", async () => {
   const manifest = JSON.parse(await readFile(join(source, ".codebuddy-plugin", "plugin.json"), "utf8"));
@@ -56,7 +57,7 @@ test("专家 ZIP 使用单一顶层目录并嵌入当前 MoneyPal 技能", async
   assert.equal(image.readUInt32BE(16), 512, "头像宽度必须为 512px。");
   assert.equal(image.readUInt32BE(20), 512, "头像高度必须为 512px。");
   const { stdout: packagedSkill } = await exec("unzip", ["-p", archive, "moneypal/skills/mcp-moneypal/SKILL.md"]);
-  assert.equal(packagedSkill, await readFile(join(workspace, "skills", "mcp-moneypal", "SKILL.md"), "utf8"));
+  assert.equal(packagedSkill, await stampedSkill());
 });
 
 test("Qoder 插件清单满足必填字段与路径规则", async () => {
@@ -103,5 +104,13 @@ test("Qoder ZIP 根目录即插件根并包含全部组件", async () => {
   assert(files.every((file) => !file.endsWith(".DS_Store")), "ZIP 不应包含 Finder 元数据。");
 
   const { stdout: packagedSkill } = await exec("unzip", ["-p", qoderArchive, "skills/mcp-moneypal/SKILL.md"]);
-  assert.equal(packagedSkill, await readFile(join(workspace, "skills", "mcp-moneypal", "SKILL.md"), "utf8"));
+  assert.equal(packagedSkill, await stampedSkill());
 });
+
+async function stampedSkill(): Promise<string> {
+  const [skill, packageJson] = await Promise.all([
+    readFile(join(workspace, "skills", "mcp-moneypal", "SKILL.md"), "utf8"),
+    readFile(join(workspace, "package.json"), "utf8"),
+  ]);
+  return skill.replace(skillVersionToken, JSON.parse(packageJson).version);
+}

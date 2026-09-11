@@ -23,9 +23,11 @@ test("根工作区不可发布，DSH 与 MCP 生成两个独立 npm 包", async 
 
   const mcp = await packageJson("mcp-moneypal");
   assert.equal(mcp.name, "mcp-moneypal");
+  assert.ok(mcp.version, "发布 MCP 包必须声明版本。");
   assert.deepEqual(mcp.bin, { "mcp-moneypal": "dist/src/mcp-main.js" });
   await present("mcp-moneypal/dist/src/mcp/server.js");
   await present("mcp-moneypal/skills/mcp-moneypal/SKILL.md");
+  assert.ok((await readFile(`${releaseRoot}/mcp-moneypal/skills/mcp-moneypal/SKILL.md`, "utf8")).includes(`  version: "${mcp.version}"`));
   await present("mcp-moneypal/skills/mcp-moneypal/references/bootstrap.md");
   await absent("mcp-moneypal/dist/src/dsh.js");
   await absent("mcp-moneypal/dist/src/host.js");
@@ -72,8 +74,8 @@ test("根工作区使用 npm，发布包清单不含依赖与安装期脚本", a
   }
 });
 
-async function packageJson(name: string): Promise<{ name?: string; bin?: Record<string, string> }> {
-  return JSON.parse(await readFile(`${releaseRoot}/${name}/package.json`, "utf8")) as { name?: string; bin?: Record<string, string> };
+async function packageJson(name: string): Promise<{ name?: string; version?: string; bin?: Record<string, string> }> {
+  return JSON.parse(await readFile(`${releaseRoot}/${name}/package.json`, "utf8")) as { name?: string; version?: string; bin?: Record<string, string> };
 }
 
 async function present(path: string): Promise<void> {

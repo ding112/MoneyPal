@@ -1,6 +1,7 @@
 import { chmod, cp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { stampSkillVersion } from "./stamp-skill-version.mjs";
 
 const workspace = fileURLToPath(new URL("..", import.meta.url));
 const compiledSource = join(workspace, "dist", "src");
@@ -34,6 +35,7 @@ async function buildMcpPackage() {
     copyStem(compiledSource, join(target, "dist", "src"), "mcp-main"),
     cp(join(workspace, "skills", "mcp-moneypal"), join(target, "skills", "mcp-moneypal"), { recursive: true }),
   ]);
+  await stampSkillVersion(join(target, "skills", "mcp-moneypal"), workspacePackage.version);
   await sanitizePublishedJavaScript(join(target, "dist", "src"));
 }
 

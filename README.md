@@ -161,7 +161,7 @@ DSH Web 支持按浏览器时区理解“今天”“昨天”；时间或时区
 
 技能还包含首次启动检查：MCP 工具缺失或 MoneyPal 运行时不可用时，它会区分“未安装”和“已安装但宿主未配置”，并在取得用户对机器级变更的授权后自动安装、复验缺少的软件。
 
-安装：把 `skills/mcp-moneypal/` 整个目录复制进 WorkBuddy 的技能目录（位置以 WorkBuddy 文档为准）。全局安装后，也可从 `<npm root -g>/mcp-moneypal/skills/mcp-moneypal/` 复制。技能与工具契约各自独立，升级包后如技能有更新，重新复制一次即可。
+安装：使用全局安装时，从 `<npm root -g>/mcp-moneypal/skills/mcp-moneypal/` 整个目录复制进 WorkBuddy 的技能目录（位置以 WorkBuddy 文档为准）。从仓库源码使用时，先执行 `npm run build`，再复制 `dist/packages/mcp-moneypal/skills/mcp-moneypal/`；该目录中的 skill 已填入当前 MCP 版本。技能与工具契约各自独立，升级包后如技能有更新，重新复制一次即可。
 
 ## 常见问题
 
