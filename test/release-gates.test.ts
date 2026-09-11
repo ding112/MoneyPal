@@ -1,11 +1,17 @@
 import assert from "node:assert/strict";
 import { access, readFile, realpath } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { test } from "node:test";
 
 const workspace = fileURLToPath(new URL("../..", import.meta.url));
-const candidate = /^\d+\.\d+\.\d+(?:-rc\.\d+)?$/u;
+const { releaseVersionPattern, releaseTagPattern, mainBoundVersionPattern } = (await import(
+  pathToFileURL(join(workspace, "scripts", "release-utils.mjs")).href
+)) as {
+  releaseVersionPattern: RegExp;
+  releaseTagPattern: RegExp;
+  mainBoundVersionPattern: RegExp;
+};
 
 async function readJson(path: string): Promise<Record<string, any>> {
   return JSON.parse(await readFile(path, "utf8")) as Record<string, any>;
@@ -14,7 +20,7 @@ async function readJson(path: string): Promise<Record<string, any>> {
 test("根版本与 lockfile、两个生成包始终一致", async () => {
   const packageJson = await readJson(`${workspace}/package.json`);
   const version = String(packageJson.version ?? "");
-  assert.match(version, candidate, "根版本必须符合 X.Y.Z 或 X.Y.Z-rc.N 格式。");
+  assert.match(version, releaseVersionPattern, "根版本必须符合 X.Y.Z 或带编号的 X.Y.Z-alpha.N、X.Y.Z-beta.N、X.Y.Z-rc.N 格式。");
 
   const lockfile = await readJson(`${workspace}/package-lock.json`);
   assert.equal(lockfile.version, version, "package-lock.json 顶层版本必须与根版本一致。");
@@ -24,6 +30,24 @@ test("根版本与 lockfile、两个生成包始终一致", async () => {
     const manifest = await readJson(`${workspace}/dist/packages/${name}/package.json`);
     assert.equal(manifest.version, version, `${name} 的生成包版本必须与根版本一致。`);
   }
+});
+
+test("发布版本格式只接受稳定版与必须带编号的 alpha、beta、rc", () => {
+  for (const version of ["1.0.0", "1.0.0-alpha.1", "1.0.0-beta.12", "1.0.0-rc.3"]) {
+    assert.match(version, releaseVersionPattern, `${version} 应被接受。`);
+    assert.match(`v${version}`, releaseTagPattern, `v${version} 应被接受。`);
+  }
+  for (const version of ["1.0.0-alpha", "1.0.0-beta", "1.0.0-rc", "1.0.0-preview.1", "1.0.0-alpha.x", "1.0.0-alpha.1.2", "1.0", "1.0.0.0", "1.0.0+build.1", "1.0.0-ALPHA.1"]) {
+    assert.doesNotMatch(version, releaseVersionPattern, `${version} 不应被接受。`);
+  }
+  for (const tag of ["1.0.0", "1.0.0-alpha.1", "v1.0.0-alpha", "v1.0.0-preview.1", "v1.0", "vv1.0.0"]) {
+    assert.doesNotMatch(tag, releaseTagPattern, `${tag} 不应被接受。`);
+  }
+});
+
+test("只有 rc 与稳定版要求提交位于 main 历史", () => {
+  for (const version of ["1.0.0", "1.0.0-rc.1"]) assert.match(version, mainBoundVersionPattern, `${version} 必须检查 main 祖先。`);
+  for (const version of ["1.0.0-alpha.1", "1.0.0-beta.7"]) assert.doesNotMatch(version, mainBoundVersionPattern, `${version} 不得要求 main 祖先。`);
 });
 
 test("发布验收链路只构建一次、保留真实打包且不含 dry-run", async () => {

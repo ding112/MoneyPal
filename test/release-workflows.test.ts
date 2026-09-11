@@ -75,9 +75,8 @@ test("Release 工作流只接受 v* tag、最小权限、OIDC 发布并复用已
   const refLines = workflow.split("\n").filter((line) => line.includes("github.ref"));
   assert.ok(refLines.length > 0, "必须把触发 ref 传给校验步骤。");
   refLines.forEach((line) => assert.match(line, /^\s+RELEASE_REF: \$\{\{ github\.ref \}\}$/u, "ref 只能经环境变量传入。"));
-  assert.match(workflow, /\^v\\d\+\\\.\\d\+\\\.\\d\+\(\?:-rc\\\.\\d\+\)\?\$/u, "只接受 vX.Y.Z 或 vX.Y.Z-rc.N 形式的 tag。");
-  assert.match(workflow, /git merge-base --is-ancestor/u, "必须检查 tag 提交在 main 历史中。");
-  assert.match(workflow, /git fetch --no-tags origin main/u, "必须显式获取远端 main。");
+  assert.match(workflow, /git fetch --no-tags origin main/u, "rc/稳定版必须显式获取远端 main。");
+  assert.match(workflow, /git merge-base --is-ancestor/u, "rc/稳定版必须检查 tag 提交在 main 历史中。");
 
   assert.match(workflow, /\n        env:\n          MONEYPAL_TARBALL_OUTPUT: \$\{\{ runner\.temp \}\}\/moneypal-release\n        run: npm run verify:release:built\n/u, "产物目录必须通过验收步骤的 step 级环境变量传递。");
   assert.match(workflow, /run: npm run verify:release:built/u);

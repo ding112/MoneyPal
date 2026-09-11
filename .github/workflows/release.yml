@@ -41,10 +41,11 @@ jobs:
           set -euo pipefail
           tag="${RELEASE_REF#refs/tags/}"
           version="${tag#v}"
-          TAG="$tag" node -e '
+          TAG="$tag" node --input-type=module -e '
+            import { releaseTagPattern } from "./scripts/release-utils.mjs";
             const tag = process.env.TAG ?? "";
-            if (!/^v\d+\.\d+\.\d+(?:-rc\.\d+)?$/u.test(tag)) {
-              console.log(`::error::只接受 vX.Y.Z 或 vX.Y.Z-rc.N 形式的 tag，当前为 ${tag}。`);
+            if (!releaseTagPattern.test(tag)) {
+              console.log(`::error::只接受 vX.Y.Z 或带编号的 vX.Y.Z-alpha.N、vX.Y.Z-beta.N、vX.Y.Z-rc.N，当前为 ${tag}。`);
               process.exit(1);
             }
           '
@@ -54,10 +55,17 @@ jobs:
             echo "::error::tag $tag 解析出的提交 $tag_sha 与本次事件提交 $head_sha 不一致。"
             exit 1
           fi
-          git fetch --no-tags origin main
-          if ! git merge-base --is-ancestor "$head_sha" origin/main; then
-            echo "::error::提交 $head_sha 不在 main 历史中，拒绝发布。"
-            exit 1
+          if TAG="$tag" node --input-type=module -e '
+            import { mainBoundVersionPattern } from "./scripts/release-utils.mjs";
+            process.exit(mainBoundVersionPattern.test((process.env.TAG ?? "").slice(1)) ? 0 : 1);
+          '; then
+            git fetch --no-tags origin main
+            if ! git merge-base --is-ancestor "$head_sha" origin/main; then
+              echo "::error::提交 $head_sha 不在 main 历史中，拒绝发布；alpha/beta 预发布可从任意提交发布。"
+              exit 1
+            fi
+          else
+            echo "alpha/beta 预发布允许从任意提交发布，跳过 main 祖先检查。"
           fi
           root_version="$(node -p 'require("./package.json").version')"
           lock_version="$(node -p 'require("./package-lock.json").version')"

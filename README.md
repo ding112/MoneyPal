@@ -355,19 +355,28 @@ npm run publish:mcp
 
 ### GitHub Actions 自动发布
 
-版本改动经过审查，合入 `main` 后由维护者手动打 tag，Release 工作流据此自动发布：
+版本改动经过审查后由维护者手动打 tag，Release 工作流据此自动发布。版本格式为稳定版 `X.Y.Z`，预发布必须带编号且只允许 `X.Y.Z-alpha.N`、`X.Y.Z-beta.N`、`X.Y.Z-rc.N`。其中 `alpha`、`beta` 允许从任意提交发布，可在功能分支上验证尚未合入 `main` 的改动；`rc` 与稳定版仍要求提交位于 `main` 历史中。
 
-1. 用 `npm version <明确版本> --no-git-tag-version` 更新根版本（版本形如 `X.Y.Z` 或 `X.Y.Z-rc.N`）。该命令更新根 `package.json` 与 `package-lock.json`，不自动提交、不打 tag。
-2. 审查差异，提交 PR，经 Test 通过后以 squash 方式合并到 `main`，然后获取最新 `main`。
-3. 对已合入的版本提交创建 annotated tag：`git tag -a v<版本> <提交SHA> -m "v<版本>"`。
+1. 用 `npm version <明确版本> --no-git-tag-version` 更新根版本（稳定版形如 `X.Y.Z`，预发布形如 `X.Y.Z-alpha.N`、`X.Y.Z-beta.N` 或 `X.Y.Z-rc.N`）。该命令更新根 `package.json` 与 `package-lock.json`，不自动提交、不打 tag。
+2. 审查差异，提交 PR，经 Test 通过后以 squash 方式合并到 `main`，然后获取最新 `main`。`alpha`/`beta` 预发布也允许直接从功能分支打 tag，不要求先合入 `main`。
+3. 对目标提交创建 annotated tag：`git tag -a v<版本> <提交SHA> -m "v<版本>"`。
 4. 只推送本次 tag：`git push origin refs/tags/v<版本>`，不要使用 `git push --tags`。
-5. Release 工作流在 tag push 时校验 tag 与源码，`npm ci` → 完整构建一次 → `node dist/src/main.js setup-runtime` → `npm run verify:release:built`（真实打包、内容检查、隔离安装与入口加载）→ `npm run release:preflight`，最后按 DSH、MCP 顺序把本次验收过的两个 tgz 发布到 npm `next`。工作流结果就是 npm 是否成功的唯一依据。
+5. Release 工作流在 tag push 时校验 tag 与源码（`alpha`/`beta` 跳过 `main` 祖先检查，`rc` 与稳定版要求提交在 `main` 历史中），`npm ci` → 完整构建一次 → `node dist/src/main.js setup-runtime` → `npm run verify:release:built`（真实打包、内容检查、隔离安装与入口加载）→ `npm run release:preflight`，最后按 DSH、MCP 顺序把本次验收过的两个 tgz 发布到 npm `next`。工作流结果就是 npm 是否成功的唯一依据。
+
+从功能分支发布 `alpha`/`beta` 的示例：
+
+```bash
+npm version 1.0.0-beta.1 --no-git-tag-version
+# 提交版本变更后
+git tag -a v1.0.0-beta.1 <目标提交SHA> -m "v1.0.0-beta.1"
+git push origin refs/tags/v1.0.0-beta.1
+```
 
 `CHANGELOG.md` 只保留历史内容，后续发布说明手工维护，不再有自动 changelog。
 
 两个工作流都会在完整构建一次后执行 `node dist/src/main.js setup-runtime` 准备 MoneyPal 托管运行时：发布门禁要求真实运行时可用且兼容，缺少运行时的环境会明确失败，而不是跳过用例。
 
-npm 发布使用 OIDC Trusted Publishing，不读取 `NPM_TOKEN`；工作流始终使用 `next` 标签，`latest` 仍由人运行 `npm run release:promote` 提升。
+npm 发布使用 OIDC Trusted Publishing，不读取 `NPM_TOKEN`；工作流始终使用 `next` 标签，`alpha`/`beta`/`rc` 与稳定版都发到 `next`，不新增 `alpha` 或 `beta` dist-tag，`latest` 仍由人运行 `npm run release:promote` 提升，且只有稳定版可以提升。
 
 发布失败时在新 tag 工作流的原运行中选择 **Re-run failed jobs**，不要重新推送、删除或移动 tag。已经存在于 registry 且字节一致的包会安全跳过，因此第二包失败后重试只发布缺失的包；若重试发现已发布包与重新生成的产物不同，停止并发布新版本，不绕过完整性检查。
 

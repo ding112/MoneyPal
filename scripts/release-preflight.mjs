@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { deepStrictEqual } from "node:assert/strict";
-import { assert, filesUnder, forbidden, hash, json } from "./release-utils.mjs";
+import { assert, filesUnder, forbidden, hash, json, releaseVersionPattern } from "./release-utils.mjs";
 
 const exec = promisify(execFile);
 const root = fileURLToPath(new URL("..", import.meta.url));
@@ -14,6 +14,7 @@ async function main() {
   const rootPackage = await json(join(root, "package.json"));
   const expectedVersion = rootPackage.version;
   assert(typeof expectedVersion === "string" && expectedVersion.length > 0, "package.json 必须提供非空 version。");
+  assert(releaseVersionPattern.test(expectedVersion), `根版本必须符合 X.Y.Z 或带编号的 X.Y.Z-alpha.N、X.Y.Z-beta.N、X.Y.Z-rc.N，当前为 ${expectedVersion}。`);
   const lockfile = await json(join(root, "package-lock.json"));
   assert(lockfile.version === expectedVersion && lockfile.packages?.[""]?.version === expectedVersion, "package-lock.json 的候选版本不一致。");
   const { stdout } = await exec("git", ["status", "--porcelain"], { cwd: root });
