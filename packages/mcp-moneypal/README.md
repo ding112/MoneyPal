@@ -12,20 +12,17 @@ MoneyPal 的 MCP stdio 服务器。它向 WorkBuddy 等 MCP 宿主提供六个�
 npm install -g mcp-moneypal
 ```
 
-在 MCP 宿主中将命令配置为 `mcp-moneypal`，并提供账本工作区：
+在 MCP 宿主中将命令配置为 `mcp-moneypal`：
 
 ```json
 {
   "mcpServers": {
-    "moneypal": {
-      "command": "mcp-moneypal",
-      "env": {
-        "MONEYPAL_LEDGER_WORKSPACE": "/path/to/ledger-workspace"
-      }
-    }
+    "moneypal": { "command": "mcp-moneypal" }
   }
 }
 ```
+
+查询、校验和预览工具通过 `ledgerWorkspace` 接收当前 Agent 任务的绝对根目录；该目录下应包含 `default/`。提交工具只接收预览返回的 `batchId`，继续使用预览绑定的账本。旧客户端完全不传 `ledgerWorkspace` 时仍可读取已有 `MONEYPAL_LEDGER_WORKSPACE`，但新配置不再设置它。
 
 初始化新账本工作区：
 

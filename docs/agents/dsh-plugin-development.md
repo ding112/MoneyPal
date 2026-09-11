@@ -29,7 +29,7 @@
 ## 工具契约
 
 - `ctx.tools.register` 必须提供完整 JSON Schema：`parameters` 与 `output` 都写出字段级约束，不用空 schema 交差。
-- DSH 与 MCP 共用同一份契约定义（`src/finance/contract.ts`）：工具名、描述、参数 Schema 和输出形状单一来源，两个包不得各自漂移。
+- DSH 与 MCP 共用 `src/finance/contract.ts` 中的财务领域契约。MCP 适配器可在查询、校验和预览的输入 Schema 上组合宿主专用的 `ledgerWorkspace`，但不得复制或改写共享的财务字段；DSH 仍从会话取得工作区。
 - 工具名、参数名、错误码和输出字段是公开契约：只能新增，不能改名或删除；破坏性变更必须升版本并在发布说明中声明。
 - 错误统一使用 `FinanceError` 与 `errorResponse` 的结构化形状：`code` 加 `message`，需要修复指引时附 `diagnostics`。
 

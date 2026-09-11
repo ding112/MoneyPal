@@ -4,28 +4,9 @@
 
 ## 使用前准备
 
-专家包只声明了 `mcp-moneypal` 命令，不会包含你的账本路径、账本内容或任何密钥。导入专家前，请先安装 MCP 包：
+专家包只声明了 `mcp-moneypal` 命令，不包含个人账本路径、账本内容或密钥。安装程序与配置连接器都完成后，专家从当前 Agent 任务取得账本工作区，再随工具调用传入。
 
-```bash
-npm install -g mcp-moneypal
-```
-
-然后在宿主（WorkBuddy / Qoder）的用户级或项目级 MCP 配置中，为 `moneypal` 配置正式账本工作区：
-
-```json
-{
-  "mcpServers": {
-    "moneypal": {
-      "command": "mcp-moneypal",
-      "env": {
-        "MONEYPAL_LEDGER_WORKSPACE": "/absolute/path/to/ledger-workspace"
-      }
-    }
-  }
-}
-```
-
-工作区应包含 `default/main.beancount`、`default/accounts.beancount` 和 `default/transactions/`。首次使用托管运行时前，取得机器级变更授权后执行 `mcp-moneypal setup-runtime`；也可以通过 `MONEYPAL_PYTHON` 配置现有解释器。
+可让助手“带我一步步连接账本”：按 [启动检查](skills/mcp-moneypal/references/bootstrap.md) 准备程序、运行时和账本，再按 [连接器配置指引](skills/mcp-moneypal/references/connectors.md) 在应用界面中配置。新连接器不设置账本环境变量；已有 `MONEYPAL_LEDGER_WORKSPACE` 的旧配置继续兼容。
 
 ## 导入 WorkBuddy
 
@@ -35,7 +16,7 @@ npm install -g mcp-moneypal
 
 完成 MCP 配置后，使用 Qoder（Desktop / CLI）的插件安装方式导入本项目生成的 `dist/experts/moneypal-{version}.zip`：包内 `.qoder-plugin/plugin.json` 为插件清单，`skills/`、`agents/` 与 `.mcp.json` 分别提供 MoneyPal 领域技能、管家定义和 MCP 服务器声明，连接依赖详见包内 `CONNECTORS.md`。
 
-导入后在工具不可用或运行时缺失时，专家会说明下一步；它不会猜测或写入你的账本目录。
+导入后，专家会复用已有 MoneyPal 连接器并核验；缺少配置时逐步指导补齐。它不会猜测账本目录，也不会重复初始化已有账本。
 
 ## 构建专家包
 

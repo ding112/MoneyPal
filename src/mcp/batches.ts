@@ -8,16 +8,24 @@ export interface RegisteredBatch {
   expiresAt: number;
 }
 
+export type WorkspaceSource = "argument" | "legacy_env";
+
+export interface BatchWorkspace {
+  /** 解析符号链接后的账本工作区，用作批次容量隔离键。 */
+  key: string;
+  source: WorkspaceSource;
+}
+
 export type BatchUnavailableReason =
   | "missing" | "expired" | "submitted" | "replaced" | "committing" | "commit_failed" | "outcome_uncertain";
 
 export type ConsumedBatch =
-  | { available: true; writer: ConfirmedTransactionWriter }
+  | { available: true; writer: ConfirmedTransactionWriter; workspaceSource: WorkspaceSource }
   | { available: false; reason: BatchUnavailableReason };
 
 /**
  * 进程内的待写入批次注册表：批次一次性消费，超过 TTL 视为过期，
- * 待写入批次超过上限时挤出最旧的。重启即失效，不落盘。
+ * 同一账本的待写入批次超过上限时挤出该账本最旧的批次。重启即失效，不落盘。
  */
 export class BatchRegistry {
   readonly #pending = new Map<string, PendingBatch>();
@@ -25,17 +33,17 @@ export class BatchRegistry {
 
   constructor(readonly ttlMs: number, readonly maxPending: number) {}
 
-  register(writer: ConfirmedTransactionWriter, now = Date.now()): RegisteredBatch {
+  register(writer: ConfirmedTransactionWriter, workspace: BatchWorkspace, now = Date.now()): RegisteredBatch {
     this.#sweep(now);
-    while (this.#pending.size >= this.maxPending) {
-      const oldest = this.#pending.keys().next().value;
+    while ([...this.#pending.values()].filter((batch) => batch.workspace.key === workspace.key).length >= this.maxPending) {
+      const oldest = [...this.#pending.entries()].find(([, batch]) => batch.workspace.key === workspace.key)?.[0];
       if (oldest === undefined) break;
       this.#pending.delete(oldest);
       this.#remember(oldest, "replaced");
     }
     const id = randomUUID();
     const expiresAt = now + this.ttlMs;
-    this.#pending.set(id, { writer, expiresAt });
+    this.#pending.set(id, { writer, expiresAt, workspace });
     return { id, expiresAt };
   }
 
@@ -51,7 +59,7 @@ export class BatchRegistry {
       return { available: false, reason: "expired" };
     }
     this.#remember(id, "committing");
-    return { available: true, writer: batch.writer };
+    return { available: true, writer: batch.writer, workspaceSource: batch.workspace.source };
   }
 
   complete(id: string, reason: "submitted" | "commit_failed" | "outcome_uncertain"): void {
@@ -81,4 +89,5 @@ export class BatchRegistry {
 interface PendingBatch {
   writer: ConfirmedTransactionWriter;
   expiresAt: number;
+  workspace: BatchWorkspace;
 }

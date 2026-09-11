@@ -1,0 +1,61 @@
+# 办公 Agent 的连接器配置
+
+在 Qoder、QoderWork、WorkBuddy 等办公宿主需要添加、启用或修复 MoneyPal 连接器时读取。先说明：“记账程序已经准备好；接下来要在这个应用的连接器里接通它，我会告诉你每个字段怎么填。”安装 npm 包、添加连接器和工具可调用是三个不同状态。
+
+## 先准备，再带用户操作
+
+- 复用已知宿主信息；不明确时只问当前使用的应用及界面入口。Qoder 办公版、QoderWork 与 Qoder IDE / CLI 的配置入口不同，不混用。
+- 先准备好已验证的启动命令和可直接粘贴的配置。JSON 结构使用 [启动检查第 4 节](bootstrap.md#4-连接宿主并验收)。账本目录由每次工具调用从当前 Agent 任务取得，不写入新连接器配置。
+- 先在连接器列表中找已有 MoneyPal 条目，包括专家包导入的条目。已有时编辑或启用原条目，不重复添加。旧条目若包含 `MONEYPAL_LEDGER_WORKSPACE`，保留用于兼容，不主动增删改。
+- 优先按宿主的连接器界面指导用户。每次只给当前动作、填写内容和完成标志；用户正在操作界面时等待结果。助手具备已授权的界面操作能力时可代为填写；否则提供步骤，不声称已经保存或启用。
+- 页面文字与下方路径不一致时，以实际界面或对应版本官方文档核实下一步；不能操作界面时请用户描述当前选项，不凭空指定按钮。仅在界面不支持或用户明确偏好时使用已核实的配置文件方式。
+
+## 按当前宿主进入
+
+### WorkBuddy
+
+1. 请用户打开左侧“连接器”，检查是否已有 MoneyPal；需要新增时点击右上角“自定义连接器”。完成标志：进入自定义 MCP 配置界面。
+2. 按下面的填写表配置；界面使用 JSON 编辑器时，提供准备好的完整配置。编辑包含其他服务的配置时仅合并 `moneypal` 条目，保留其他服务。
+3. 保存后检查 MoneyPal 的连接状态并启用。若当前版本展示旧版入口，可按官方 MCP 指南进入“插件 → MCP 服务器 → 配置 MCP”。状态异常时读取具体错误，回到启动检查对应阶段。
+
+入口依据：[WorkBuddy 连接器](https://www.codebuddy.cn/docs/workbuddy/From-Beginner-to-Expert-Guide/Function-Description/Connector)、[WorkBuddy MCP](https://www.codebuddy.cn/docs/workbuddy/From-Beginner-to-Expert-Guide/Function-Description/MCP-Guide)。
+
+### Qoder 办公版
+
+1. 打开左侧“扩展（Extensions）→ 连接器（Connectors）”，检查已有条目；新增时进入“添加连接器（Add Connector）→ 自定义 MCP（Add custom MCP）”。
+2. 有表单与 JSON 两种方式：表单按下方填写；JSON 使用已准备的完整配置。核对后点击“Add MCP”。
+3. 检查连接器是否可用及工具列表是否加载，再回到对话做只读验收。
+
+入口依据：[Qoder Connectors](https://docs.qoder.com/qoder/connectors)。此入口不适用于 Qoder IDE / CLI。
+
+### QoderWork 界面
+
+1. 打开“扩展 → 连接器”，点击右上角“＋ Add”。选择“Paste JSON Config”导入准备好的 JSON，或“Fill in Config Manually”按下表填写。
+2. 导入或添加后，在“Installed → Custom”找到 MoneyPal，确认已启用并展开查看工具。
+3. QoderWork 官方说明，切换连接器启用状态后需新建对话才能生效。让用户在新对话粘贴交接说明，不要求旧对话反复重试或重新安装。
+
+入口与生效规则依据：[QoderWork Connector](https://docs.qoder.com/qoderwork/connectors)。
+
+## MoneyPal 填写内容
+
+| 界面字段 | 应填写内容 |
+| --- | --- |
+| 名称 / Server Name | `moneypal`，或沿用已有条目名称 |
+| 类型 / Transport / Server Type | 本地进程 `STDIO` |
+| 命令 / Command | `mcp-moneypal`；宿主找不到命令时使用已验证的可执行文件绝对路径 |
+| 参数 / Arguments（若有独立字段） | 留空；不能填 `init`、`setup-runtime` 或账本路径 |
+| 自定义 Python（已使用时） | 保留环境变量 `MONEYPAL_PYTHON` 及其已验证的绝对路径；托管运行时无需填写 |
+
+MoneyPal 是本地 stdio 服务，无需填写服务 URL、API Key、OAuth 登录或新的账本环境变量。启动命令不带子命令时才运行 MCP 服务。界面如果只显示 URL 输入，先检查是否选成了远程传输类型，不编造本地 HTTP 地址。
+
+## 保存后的验收与交接
+
+连接器显示已连接或工具列表已出现，只是连接证据。接着按启动检查调用账户列表并校验账本，通过后才进入首次查询；宿主级工具权限提示由用户按当前操作处理，连接授权不替代交易预览后的确认。
+
+需要重载、重启或新对话时，给出按事实填写的简短交接说明：
+
+> 继续 MoneyPal 首次引导。已完成：〔实际完成的安装、运行时、账本准备〕。宿主：〔应用〕，连接器：〔名称〕，当前状态：〔已保存/已启用/待重载〕。下一步：发现 MoneyPal 工具，查询账户并校验账本，通过后继续首次查询。请检查当前状态，不重复安装或初始化；尚未确认任何交易写入。
+
+仅在确实没有待处理交易时使用最后一句；若恢复中已有预览或提交，按真实状态交接并遵循 skill 的写入恢复规则。新任务从宿主取得任务根工作区，不在交接文本中复制账本内容。
+
+以上界面指引于 2026-09-10 根据官方文档核对；宿主版本变化时按实际界面复核。

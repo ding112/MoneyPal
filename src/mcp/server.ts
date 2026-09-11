@@ -1,4 +1,6 @@
 import { createRequire } from "node:module";
+import { realpath } from "node:fs/promises";
+import { isAbsolute, resolve } from "node:path";
 import { createInterface } from "node:readline";
 
 import {
@@ -12,9 +14,9 @@ import {
 import { FinanceError } from "../finance/errors.js";
 import { createLedgerEngine } from "../finance/engine.js";
 import { createConfirmedTransactionWriter } from "../finance/write.js";
-import { BatchRegistry, type BatchUnavailableReason } from "./batches.js";
+import { BatchRegistry, type BatchUnavailableReason, type WorkspaceSource } from "./batches.js";
 
-/** MCP 宿主配置账本工作区的环境变量；调用方不得通过工具参数传入路径。 */
+/** 旧版 MCP 宿主配置的账本工作区；仅供缺少新参数的客户端兼容。 */
 export const WORKSPACE_ENV = "MONEYPAL_LEDGER_WORKSPACE";
 /** 可选：写入预览批次的有效期（毫秒），供测试调整。 */
 export const BATCH_TTL_ENV = "MONEYPAL_BATCH_TTL_MS";
@@ -141,17 +143,23 @@ export function startMcpServer(io: McpIo): void {
   const operations: Record<string, (args: Message, signal: AbortSignal) => Promise<unknown>> = {};
   for (const definition of READ_ONLY_TOOL_DEFINITIONS) {
     const name = definition.name;
-    operations[name] = (args, signal) => LEDGER_ENGINE_OPERATIONS[name as keyof typeof LEDGER_ENGINE_OPERATIONS]!(createLedgerEngine({ ledgerWorkspace: workspaceFromEnv() }), args, signal);
+    operations[name] = async (args, signal) => {
+      const workspace = await workspaceFromArguments(args);
+      const payload = await LEDGER_ENGINE_OPERATIONS[name as keyof typeof LEDGER_ENGINE_OPERATIONS]!(createLedgerEngine({ ledgerWorkspace: workspace.path }), args, signal);
+      return withWorkspaceSource(payload, workspace.source);
+    };
   }
   operations.finance_preview_transactions = async (args, signal) => {
+    const workspace = await workspaceFromArguments(args);
     const transactions = readTransactions(args);
-    const writer = await createConfirmedTransactionWriter(financeOptions());
+    const writer = await createConfirmedTransactionWriter({ ledgerWorkspace: workspace.path });
     const preview = await writer.preview(transactions, signal);
-    const batch = batches.register(writer);
+    const batch = batches.register(writer, { key: workspace.key, source: workspace.source });
     return {
       batchId: batch.id,
       expiresAt: new Date(batch.expiresAt).toISOString(),
       ...preview,
+      workspaceSource: workspace.source,
     };
   };
   operations.finance_commit_transactions = async (args, signal) => {
@@ -163,7 +171,7 @@ export function startMcpServer(io: McpIo): void {
     try {
       const result = await consumed.writer.commit(signal);
       batches.complete(batchId, "submitted");
-      return result;
+      return withWorkspaceSource(result, consumed.workspaceSource);
     } catch (error) {
       batches.complete(batchId, error instanceof FinanceError && error.code === "write_outcome_uncertain" ? "outcome_uncertain" : "commit_failed");
       throw error;
@@ -235,22 +243,69 @@ function batchTtlMs(log: (message: string) => void): number {
 }
 
 function toMcpTool(definition: ToolDefinition): Record<string, unknown> {
-  return { name: definition.name, description: definition.description, inputSchema: definition.parameters };
+  return {
+    name: definition.name,
+    description: definition.description,
+    inputSchema: definition.name === "finance_commit_transactions"
+      ? definition.parameters
+      : withLedgerWorkspaceParameter(definition.parameters),
+  };
 }
 
-function financeOptions(): { ledgerWorkspace: string } {
-  return { ledgerWorkspace: workspaceFromEnv() };
+function withLedgerWorkspaceParameter(parameters: Record<string, unknown>): Record<string, unknown> {
+  const properties = typeof parameters.properties === "object" && parameters.properties !== null
+    ? parameters.properties as Record<string, unknown>
+    : {};
+  return {
+    ...parameters,
+    properties: {
+      ...properties,
+      ledgerWorkspace: {
+        type: "string",
+        description: "当前 Agent 任务的账本工作区绝对路径；其 default/ 子目录是唯一正式账本。新调用必须提供；省略仅兼容旧版环境变量配置。",
+      },
+    },
+  };
 }
 
-function workspaceFromEnv(): string {
-  const workspace = process.env[WORKSPACE_ENV];
-  if (typeof workspace !== "string" || !workspace.trim()) {
+interface SelectedWorkspace {
+  path: string;
+  key: string;
+  source: WorkspaceSource;
+}
+
+async function workspaceFromArguments(args: Message): Promise<SelectedWorkspace> {
+  if (Object.prototype.hasOwnProperty.call(args, "ledgerWorkspace")) {
+    const workspace = args.ledgerWorkspace;
+    if (typeof workspace !== "string" || !workspace.trim() || !isAbsolute(workspace)) {
+      throw new FinanceError("invalid_workspace", "ledgerWorkspace 必须是当前 Agent 任务的非空绝对路径。");
+    }
+    return selectedWorkspace(workspace, "argument");
+  }
+  const legacy = process.env[WORKSPACE_ENV];
+  if (typeof legacy !== "string" || !legacy.trim()) {
     throw new FinanceError(
       "invalid_workspace",
-      `未配置账本工作区；请在 MCP 宿主的 env 中设置 ${WORKSPACE_ENV}，指向包含 default/main.beancount 的账本工作区。`,
+      "无法取得账本工作区；请在工具调用中传入当前 Agent 任务的 ledgerWorkspace 绝对路径。",
     );
   }
-  return workspace;
+  return selectedWorkspace(legacy, "legacy_env");
+}
+
+async function selectedWorkspace(path: string, source: WorkspaceSource): Promise<SelectedWorkspace> {
+  const absolute = resolve(path);
+  let key = absolute;
+  try {
+    key = await realpath(absolute);
+  } catch {
+    // 布局和存在性由账本引擎返回稳定错误；此处只尽量归并路径别名。
+  }
+  return { path: absolute, key, source };
+}
+
+function withWorkspaceSource(payload: unknown, workspaceSource: WorkspaceSource): Record<string, unknown> {
+  if (typeof payload !== "object" || payload === null) return { workspaceSource };
+  return { ...(payload as Record<string, unknown>), workspaceSource };
 }
 
 /**

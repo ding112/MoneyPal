@@ -5,12 +5,12 @@ description: 通过 MoneyPal MCP 财务工具查询、校验和记账用户的�
 
 # MoneyPal MCP 财务工具
 
-你通过 MCP 财务工具访问用户本机的正式账本（账本工作区由 MCP 宿主配置，财务工具参数不传路径；首次配置时可向用户确认路径）。工具分两类：
+你通过 MCP 财务工具访问用户本机的正式账本。当前 Agent 任务的根工作区是账本工作区，其 `default/` 子目录是该任务唯一的正式账本；不要使用当前文件目录、临时 `cd` 后的目录或 MCP 进程工作目录代替它。宿主无法提供任务根目录时，让用户明确给出绝对目录。
 
 - 六个只读工具：查流水（finance_query_register）、余额（finance_get_balance）、损益表、资产负债表、声明账户列表（finance_list_accounts）、整本校验（finance_validate_journal）。
 - 两个写入工具：finance_preview_transactions 生成预览批次，finance_commit_transactions 提交批次。
 
-每个成功响应都带 `serverToday`（服务器本机时区当日，YYYY-MM-DD）。
+查询、校验和预览时，把账本工作区的绝对路径作为 `ledgerWorkspace` 传入；提交只传预览返回的 `batchId`。每个成功响应都带 `serverToday`（服务器本机时区当日，YYYY-MM-DD）和 `workspaceSource`：正常值应为 `argument`；`legacy_env` 表示旧客户端仍从环境变量取目录，提醒用户升级连接方式，但不主动修改其配置。
 
 ## 选择流程
 
@@ -18,6 +18,9 @@ description: 通过 MoneyPal MCP 财务工具查询、校验和记账用户的�
 - 用户有明确查询或记账需求时，直接按下方规则处理；不要仅因是新对话就强制培训。
 - 工具按需加载的宿主，先使用其工具发现能力查找 MoneyPal 工具。已有可调用的 MoneyPal `finance_*` 工具表示 MCP 已连接，直接调用，不重复安装；工具可见不代表运行时和账本已有效。
 - 工具发现后仍不可用，或返回 `runtime_unavailable`、`invalid_workspace`、`invalid_ledger_layout` 时，读取 [MCP 与 MoneyPal 启动检查](references/bootstrap.md) 的对应分支；恢复后继续原任务，不重新开始整套教学。一次对话内已验证就绪后不重复检查，除非出现新错误或用户切换环境。
+- 一个任务只使用一个账本工作区。用户要切换正式账本时，请其在目标账本工作区新建任务；不要在同一任务内自行更换 `ledgerWorkspace`。
+
+Qoder、QoderWork、WorkBuddy 等办公宿主需要配置连接器时，按启动检查中的 [连接器指引](references/connectors.md) 带用户完成界面配置、启用和验收。
 
 ## 财务日期规则
 
@@ -40,14 +43,14 @@ description: 通过 MoneyPal MCP 财务工具查询、校验和记账用户的�
 
 ## 写入协议（人在写入前有最终决定权）
 
-1. 用户提出记账：把交易整理成候选交易，调用 finance_preview_transactions。
+1. 用户提出记账：把交易整理成候选交易，使用当前任务的 `ledgerWorkspace` 调用 finance_preview_transactions。
 2. 拿到预览后，把以下内容完整展示给用户，不得省略或只做摘要：按币种的收支汇总（内部转账不计入）、每笔交易明细、重复警告、目标年度交易文件及是否新建、批次过期时间。
 3. 有“可能重复”警告时明确指出，请用户决定保留或丢弃。
 4. 仅在用户明确同意后（如回复“确认记账”），调用 finance_commit_transactions 并传入 `batchId`。
 5. 用户要求修改或犹豫时，不调用 commit；修改后重新 preview 生成新批次。
-6. commit 成功后查询一次流水复核，并向用户确认写入位置。
+6. commit 成功后，使用预览时的同一 `ledgerWorkspace` 查询一次流水复核，并向用户确认写入位置。
 
-批次规则：批次 30 分钟过期、待写入至多 3 个、只能消费一次。用户连续报多笔账时，合并成一个预览批次再请确认，减少确认次数；不同年度的日期混在一起时拆开提交。
+批次规则：批次 30 分钟过期、每个账本待写入至多 3 个、只能消费一次。批次绑定预览时的账本，提交时不得更换。用户连续报多笔账时，合并成一个预览批次再请确认，减少确认次数；不同年度的日期混在一起时拆开提交。
 
 ## 错误恢复
 

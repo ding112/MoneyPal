@@ -11,7 +11,7 @@
 
 两个包独立安装。下方命令使用默认发布版本；如需安装当前发布脚本对应的 `next` 预发布版本，将安装命令中的包名替换为 `dsh-moneypal@next` 或 `mcp-moneypal@next`。
 
-正式账本保存在宿主指定的**账本工作区**，仓库本身不是你的正式账本；财务工具不会保存、询问或搜索账本目录。
+正式账本保存在当前 Agent 任务的**账本工作区**，仓库本身不是你的正式账本；MCP 财务工具在每次调用中接收该工作区，不保存或搜索账本目录。
 
 ## 导航
 
@@ -96,28 +96,24 @@ mcp-moneypal init /path/to/ledger-workspace
 
 **已有符合布局的账本无需重新初始化**。如果 `default/` 已存在，命令会拒绝执行，不会覆盖；已有目录不完整时请按[账本布局](#账本布局与初始化)检查修复。
 
-### 4. 配置宿主并首次查询
+### 4. 配置连接器并首次查询
 
-在 WorkBuddy 的用户级或项目级 `mcp.json` 中加入：
+在 WorkBuddy、Qoder 或其他 MCP 宿主的连接器界面添加本地 stdio 服务；JSON 配置如下：
 
 ```json
 {
   "mcpServers": {
-    "moneypal": {
-      "command": "mcp-moneypal",
-      "env": {
-        "MONEYPAL_LEDGER_WORKSPACE": "/path/to/ledger-workspace"
-      }
-    }
+    "moneypal": { "command": "mcp-moneypal" }
   }
 }
 ```
 
-环境变量说明：
+可选环境变量：
 
-- `MONEYPAL_LEDGER_WORKSPACE`（必填）：账本工作区，须包含 `default/main.beancount`、`default/accounts.beancount` 和 `default/transactions/`。有多个账本时注册多个 `mcpServers` 条目，各自指向不同工作区。
 - `MONEYPAL_PYTHON`（可选）：解释器的绝对路径；缺省使用共享托管运行时。
 - `MONEYPAL_BATCH_TTL_MS`（可选）：写入预览批次的有效期（毫秒），默认 30 分钟；仅供测试调整。
+
+查询、校验和预览工具的 `ledgerWorkspace` 参数使用当前 Agent 任务的绝对根目录，其中须包含 `default/main.beancount`、`default/accounts.beancount` 和 `default/transactions/`。一个任务只操作一个正式账本；切换账本时在目标账本工作区新建任务。旧客户端完全不传该参数时仍兼容已有 `MONEYPAL_LEDGER_WORKSPACE`，但新连接器不要设置它。
 
 配置后重启 WorkBuddy 即可。六个只读工具与 DSH 完全一致；每个成功的工具响应都带 `serverToday`（服务器本机时区当日），可与对话中的日期互相核对。工具描述要求所有日期参数使用绝对日期 YYYY-MM-DD；请直接给出绝对日期，避免“昨天”等相对表述被错误换算。余额以工具 JSON 输出呈现，资产负债概览抽屉保持 DSH Web 专属。
 
@@ -171,7 +167,7 @@ DSH Web 支持按浏览器时区理解“今天”“昨天”；时间或时区
 
 | 现象 | 处理方式 |
 | --- | --- |
-| `invalid_workspace` | MCP：检查 `mcp.json` 的 `env` 是否设置了非空的 `MONEYPAL_LEDGER_WORKSPACE`，修改后重启宿主。 |
+| `invalid_workspace` | MCP：确认宿主能取得当前 Agent 任务的根工作区，并在工具调用中传入非空绝对路径 `ledgerWorkspace`。 |
 | `invalid_ledger_layout` | 检查当前工作区的 `default/main.beancount`、`default/accounts.beancount`、年度交易文件及 include。新账本用对应快速开始中的 `init`；已有 `default/` 时按布局修复，不要反复初始化。 |
 | `runtime_unavailable` | 执行对应入口的 `runtime-status` 检查，缺少运行时则执行 `setup-runtime`；运行时正在安装或使用时稍后重试。使用 `MONEYPAL_PYTHON` 时检查该解释器的路径和依赖。 |
 | MCP 服务器无法启动 | 确认宿主能找到全局命令 `mcp-moneypal`；源码方式先构建，再检查配置的入口路径。 |
@@ -335,7 +331,7 @@ dsh plugin --profile web exec dsh-moneypal install-preset
 
 ### WorkBuddy 专家包：恰恰账本
 
-仓库还可生成可上传到 WorkBuddy 专家市场的“恰恰账本”专家包。它内置 `mcp-moneypal` 命令声明和同一份 MoneyPal 领域技能，但不会包含账本路径、账本内容、Token 或其他本机配置：导入前仍须按上方示例在 WorkBuddy MCP 配置中设置 `MONEYPAL_LEDGER_WORKSPACE`。
+仓库还可生成可上传到 WorkBuddy 专家市场的“恰恰账本”专家包。它内置 `mcp-moneypal` 命令声明和同一份 MoneyPal 领域技能，但不会包含账本路径、账本内容、Token 或其他本机配置。专家从当前任务取得账本工作区并随工具调用传入，无需在新连接器中设置账本环境变量。
 
 执行 `npm run build` 后，上传 `dist/experts/moneypal.zip`。ZIP 解压后的顶层目录为 `moneypal/`，包含专家定义、头像、MCP 声明和领域技能；市场审核与最终发布由维护者在 WorkBuddy 网页完成。
 
