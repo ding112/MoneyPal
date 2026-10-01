@@ -1,37 +1,103 @@
 # MoneyPal
 
-MoneyPal 是 DSH Web 的本地 Beancount 记账插件。它提供财务查询、账本校验、经人工确认的记账工具，以及资产负债概览抽屉。
+**让你的 AI 助手真正会记账。**
+
+支付宝、微信和各大银行账单自动导入，告别逐笔录入。把导出的账单文件交给 AI，自动整理交易，预览确认后记入账本；再用自然语言查余额、查流水、看收支报表。
+
+基于 Beancount，本地优先，账本以标准文本保存在自己的电脑上。
+
+## 选择你的安装方式
+
+| 使用环境 | 安装入口 |
+| --- | --- |
+| DeepSeek Harness Web | [安装 DSH 插件 `dsh-moneypal`](#install-dsh) |
+| WorkBuddy | [导入 MoneyPal Skill](https://github.com/ding112/moneypal-skill#install-skill) · [WorkBuddy 连接器指引](https://github.com/ding112/moneypal-skill/blob/main/skills/moneypal/references/connectors.md#workbuddy) |
+| Qoder / QoderWork | [导入 MoneyPal Skill](https://github.com/ding112/moneypal-skill#install-skill) · [Qoder 办公版](https://github.com/ding112/moneypal-skill/blob/main/skills/moneypal/references/connectors.md#qoder-办公版) / [QoderWork 连接器指引](https://github.com/ding112/moneypal-skill/blob/main/skills/moneypal/references/connectors.md#qoderwork-界面) |
+| 其他本地 MCP Agent | [npm 包 `mcp-moneypal`](https://www.npmjs.com/package/mcp-moneypal) · [环境要求](https://github.com/ding112/moneypal-skill#first-use) · [MCP 配置](https://github.com/ding112/moneypal-skill#connect-mcp) |
+
+本仓库是 MoneyPal 产品主页，并维护 DSH Web 插件；[MoneyPal Skill 仓库](https://github.com/ding112/moneypal-skill)分发通用技能目录，供支持 Skill 的 Agent 应用使用。
+
+## 主要能力
+
+- **账单自动导入**：把支付宝、微信或银行导出的账单文件交给助手，自动整理交易，预览确认后入账。
+- **自然语言查询与记账**：直接说出需求，查余额、查流水、看损益和资产负债，也可以记录单笔日常交易。
+- **Beancount 文本账本**：账本保存在自己的电脑上，使用标准文本格式，可自行备份和迁移。
+- **写入前预览确认**：核对日期、账户、金额和疑似重复提醒后再写入；DSH 使用原生确认框，Skill 在对话中请求确认。
+
+## 如何导入账单
+
+完成对应入口的安装与账本准备后，DSH 和 Skill 都可以处理账单导入：
+
+1. 从支付宝、微信或银行导出账单文件。
+2. 将文件提供给助手，或告知助手可读取的文件位置。
+3. 发送以下导入请求。
+4. 核对助手展示的交易明细、账户、收支汇总、写入文件和疑似重复提醒；需要调整时先修改预览。
+5. 确认后写入：DSH 在原生确认框中确认；Skill 在对话中回复“确认记账”。
+6. 助手写入后查询流水复核，报告实际结果。
+
+> 请导入这份账单，先整理交易并展示记账预览，提示可能重复的记录，等我确认后再写入。
+
+账本文件保存在本地，但账单内容、查询结果和交易信息可能进入宿主配置的模型上下文。
+
+<a id="install-dsh"></a>
 
 ## 安装与首次使用
 
-需要 Node.js 22.18+、DSH 0.1.7-rc.2 或更新版本的 Web profile，以及本地账本工作区。首次创建托管运行时还需要 Python 3.11+（含 `venv` 和 `pip`），并能下载 Python 依赖。
+已有 DSH Web（0.1.7-rc.2 或更新版本）后，只需三步：
+
+**1. 安装插件**
 
 ```bash
 dsh plugin --profile web add dsh-moneypal
+```
+
+**2. 打开 MoneyPal 会话**
+
+重启 DSH Web 并硬刷新浏览器，选择准备保存账本的文件夹作为工作区，在新会话中选择 **MoneyPal** 预设。
+
+**3. 让助手完成首次准备**
+
+把下面这句话发给助手：
+
+> 帮我开始使用 MoneyPal：检查并按需准备运行环境，使用当前工作区的账本；如果还没有账本，先展示初始化内容，等我确认后创建。最后检查账本并查询一次余额。
+
+DSH 可以代你执行环境检查与准备，并通过原生确认框创建新账本；已有账本会直接复用。完成首次余额查询后，就可以提供账单文件或直接用自然语言记账。
+
+<details>
+<summary>环境要求与手动排查命令</summary>
+
+需要 Node.js 22.18+。首次创建托管运行时还需要 Python 3.11+（含 `venv` 和 `pip`），并能下载 Python 依赖；缺少条件时，让助手协助检查和准备。
+
+以下命令可由 DSH 助手执行，也可在终端手动运行。
+
+检查 MoneyPal 运行时：
+
+```bash
 dsh plugin --profile web exec dsh-moneypal runtime-status
 ```
 
-如果运行时状态中的 `available` 和 `compatible` 不是 `true`，显式准备运行时：
+如果状态中的 `available` 和 `compatible` 不是 `true`，准备运行时后再次检查：
 
 ```bash
 dsh plugin --profile web exec dsh-moneypal setup-runtime
+dsh plugin --profile web exec dsh-moneypal runtime-status
 ```
 
-兼容运行时需要 Python 3.11+、Beancount 3.2.3+ 和 beanquery 0.2.0+。日常启动和查询不会自动安装或升级运行时。
+兼容运行时需要 Python 3.11+、Beancount 3.2.3+ 和 beanquery 0.2.0+。首次引导由助手按需执行准备命令；日常启动和查询不会自动安装或升级运行时。
 
-新账本可通过 CLI 初始化：
+新账本优先让助手通过 `finance_initialize_ledger` 展示初始化内容，在原生确认框中确认后创建。也可手动初始化，将路径替换为选定的账本工作区：
 
 ```bash
 dsh plugin --profile web exec dsh-moneypal init /path/to/ledger-workspace
 ```
 
-也可在 DSH Web 的 MoneyPal 会话中调用 `finance_initialize_ledger`。两种方式都会拒绝覆盖已存在的 `default/`。已有符合布局的账本无需重新初始化。
+两种方式都会拒绝覆盖已存在的 `default/`。已有符合布局的账本无需重新初始化。
 
-重启 DSH Web 并硬刷新浏览器，在打开账本工作区后的新会话中选择 `MoneyPal` 预设。向助手发送“列出账本账户并检查账本是否有效”即可完成首次检查。
+</details>
 
 ## 日常使用
 
-MoneyPal 提供以下工具：
+DSH 插件提供以下工具：
 
 | 工具 | 用途 |
 | --- | --- |
