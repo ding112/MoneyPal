@@ -33,7 +33,9 @@ test("DSH 客户端可解析包元数据与客户端入口", async () => {
   assert.ok(packageJson.exports["./client"]);
   assert.ok(packageJson.dsh.client);
   const patch = await readFile(new URL("../packages/dsh-moneypal/cordis.patch.yml", import.meta.url), "utf8");
-  assert.match(patch, /- id: connection\n  inject:\n    - webRuntime\n    - webServer(?:\n|$)/u, "connection 必须声明 RPC 注册实际使用的 webServer 服务。");
+  const patchEntries = patch.replace(/^#.*$/gmu, "");
+  assert.match(patchEntries, /- id: connection\n  inject:\n    - webStartup\n    - webServer(?:\n|$)/u, "connection 必须保留 webStartup 注入并追加 RPC 注册实际使用的 webServer 服务。");
+  assert.doesNotMatch(patchEntries, /webRuntime/u, "connection 不得引用 DSH 0.2.1 已移除的 webRuntime 服务。");
 });
 
 test("发布包包含 MoneyPal 预设补丁并按 bundle 顺序注册", async () => {

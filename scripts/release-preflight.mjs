@@ -42,7 +42,9 @@ async function main() {
   deepStrictEqual(rootEntry.inject, ["sessions", "connection"], "dsh-moneypal 包根必须声明宿主服务注入 inject。");
   assert(rootEntry.name === "dsh-moneypal", "dsh-moneypal 包根导出的 name 必须严格等于包名。");
   const patch = await readFile(join(root, "dist", "packages", "dsh-moneypal", "cordis.patch.yml"), "utf8");
-  assert(/- id: connection\n  inject:\n    - webRuntime\n    - webServer(?:\n|$)/u.test(patch), "bundle patch 必须为 connection 声明其 RPC 注册所需的 webServer 注入。");
+  const patchEntries = patch.replace(/^#.*$/gmu, "");
+  assert(/- id: connection\n  inject:\n    - webStartup\n    - webServer(?:\n|$)/u.test(patchEntries), "bundle patch 必须保留 connection 的 webStartup 注入并追加其 RPC 注册所需的 webServer 注入。");
+  assert(!/webRuntime/u.test(patchEntries), "bundle patch 不得引用 DSH 0.2.1 已移除的 webRuntime 服务。");
   assert(/- id: dsh-moneypal\n      name: dsh-moneypal(?:\n|$)/u.test(patch), "bundle patch 必须以精确包根挂载 dsh-moneypal。");
   assert(!/name:\s*dsh-moneypal\//u.test(patch), "bundle patch 不得使用包名子路径。");
   console.log(JSON.stringify({ ok: true, version: expectedVersion, packages, bridgeSha256: hash(bridge) }, null, 2));

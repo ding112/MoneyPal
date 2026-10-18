@@ -17,6 +17,8 @@ interface HostContext {
 }
 
 export const name = "dsh-moneypal";
+// RPC 路由在 connection 的提供者 Context 上注册（owner.webServer），
+// 因此 webServer 由 bundle patch 追加给 connection，而不是本入口的 inject。
 export const inject = ["sessions", "connection"];
 
 /** Web profile 的全局只读入口；Agent 工具仍由 /dsh 提供。 */

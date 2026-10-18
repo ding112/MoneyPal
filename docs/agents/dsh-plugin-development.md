@@ -2,7 +2,7 @@
 
 本文件是本仓库 DSH 插件开发的唯一权威规范，覆盖依赖边界、服务访问、注册语义、工具契约、错误边界和验证流程。修改插件入口、服务注入、工具契约、宿主注册、运行时依赖或发布流程前，必须先阅读本文并按其执行。
 
-规范以当前安装的 DSH（0.1.2-rc.1）与 Cordis（4.0.2，随 DSH vendor 提供）的实际行为为准。外部文章、剪藏和针对旧 RC 版本的经验只作参考；升级 DSH 后必须重新核对实际 API，再更新本文与 `src/` 中的本地类型。
+规范以当前安装的 DSH（0.2.1-rc.2）与 Cordis（4.0.5，随 DSH vendor 提供）的实际行为为准。外部文章、剪藏和针对旧 RC 版本的经验只作参考；升级 DSH 后必须重新核对实际 API，再更新本文与 `src/` 中的本地类型。本次已按 0.2.1-rc.2 核对服务注入与 RPC 接点；Agent 预设快照的 0.2.1 同步仍是独立待办（见“DSH Web Agent 预设”）。
 
 ## 依赖边界
 
@@ -26,11 +26,18 @@
 - 一切注册必须由 Cordis 生命周期持有：在 `apply(ctx)` 内通过注册 API 或 `ctx.effect` 完成，随插件卸载释放。模块作用域不得创建进程级单例、定时器、句柄或文件副作用。
 - 全局 RPC 适配器固定 `authority: "loopback"`；客户端不能传入账本路径，宿主只从当前已挂载会话解析工作区。
 
+## Bundle 补丁
+
+- `cordis.patch.yml` 只做宿主 entry 的最小必要改动：以 `id` 定向 patch，保留该 entry 在当前 DSH 版本已有的注入与配置，再追加 MoneyPal 需要的服务。
+- `connection.rpc.handle` 的通道路由由 connection 服务提供者所在 Context 注册（`owner.webServer`）；调用方自身声明 `webServer` 不能替代。补丁必须让 `connection` 在宿主既有注入之外追加 `webServer`。DSH 0.2.1-rc.2 的既有注入名是 `webStartup`（0.2.0 及更早为 `webRuntime`）。
+- 不得引用宿主中不存在的服务名：Cordis 会把缺失注入视为依赖未满足，required entry 永久 pending，整次启动失败。升级 DSH 后先运行 `dsh --profile <name> --dump-config` 核对实际 entry，再同步补丁与发布门禁断言。
+
 ## DSH Web Agent 预设
 
 - DSH Web 自 `0.1.7-rc.2` 起通过 `@deepseek-ai/dsh-agent-preset` 声明 Agent 预设；旧 `$DSH_HOME/.agent-presets/<id>/` 文件目录不再加载。本仓库仅支持声明式布局。
 - MoneyPal 预设随 `dsh-moneypal` bundle 发布，补丁顺序为宿主 `cordis.patch.yml` 后接 `presets/moneypal.patch.yml`。不得覆盖 `preset-standard`；MoneyPal 预设必须保留被支持 DSH 版本的 standard 插件列表、嵌套分组、隔离设置与禁用条件，再附加 MoneyPal 工具。
 - 预设文件是 DSH `@deepseek-ai/dsh-web-app/presets/standard.patch.yml` 的版本快照。升级 DSH 时必须逐项核对该文件并同步快照，验证 bundle 能被 DSH 组合和新会话加载；发布产物必须包含声明补丁。
+- 0.2.1-rc.2 的 standard 快照包含 `time-context`、`tool-schedule`、`tool-plugin-market`；当前 `presets/moneypal.patch.yml` 仍以 `dsh-moneypal-time-context` 承载 time-context，且缺少 `tool-schedule` 与 `tool-plugin-market`，升级预设时必须逐项同步后再做发布 UI 验收。
 - 安装 bundle 后重启 DSH Web，并在新会话中选择 MoneyPal。`install-preset` 和 `uninstall-preset` 仅为只读兼容命令，不创建、修改或删除 profile 文件；卸载通过移除 bundle 完成。旧目录不自动清理。
 - MoneyPal 运行时与预设注册无关。使用前运行 `runtime-status`；只有 `available` 或 `compatible` 不是 `true` 时才运行 `setup-runtime`。发布门禁仍按本文件验证流程显式准备运行时。
 
