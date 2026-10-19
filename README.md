@@ -10,6 +10,8 @@
 
 [![MoneyPal 使用演示：整理账单、预览确认与查询结果](assets/images/video-introduction-cover.jpg)](https://www.bilibili.com/video/BV1EaJR6zEtb/)
 
+[▶ 点击封面观看 MoneyPal 使用演示](https://www.bilibili.com/video/BV1EaJR6zEtb/)
+
 ## MoneyPal 能帮你做什么
 
 - **减少逐笔录入**：让 AI 整理导出的账单，把精力放在核对结果上。
