@@ -34,7 +34,7 @@
 | 我正在使用 | 下一步 |
 | --- | --- |
 | DeepSeek Harness Web | [在 DSH 中开始使用](#install-dsh) |
-| WorkBuddy | [查看 WorkBuddy 接入指南](https://github.com/ding112/moneypal-skill/blob/main/skills/moneypal/references/connectors.md#workbuddy) |
+| WorkBuddy | [查看 MoneyPal Skill 安装指南](https://github.com/ding112/moneypal-skill) |
 | Qoder / QoderWork | [按当前宿主查看接入指南](https://github.com/ding112/moneypal-skill/blob/main/skills/moneypal/references/connectors.md#按当前宿主进入) |
 | 其他本地 MCP Agent | [查看 MCP 配置指南](https://github.com/ding112/moneypal-skill#connect-mcp) |
 
