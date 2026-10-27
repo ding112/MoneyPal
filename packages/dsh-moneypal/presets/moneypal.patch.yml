@@ -1,4 +1,5 @@
 # Snapshot of @deepseek-ai/dsh-web-app 0.1.7-rc.2 standard preset.
+# 工作目录由宿主运行时上下文提供，不使用 persona 模板变量。
 - insert:
     - id: preset-dsh-moneypal
       name: '@deepseek-ai/dsh-agent-preset'
@@ -11,7 +12,6 @@
           - id: persona
             name: '@deepseek-ai/dsh-persona'
             config:
-              suffix: Your working directory is {{cwd}}.
               prefix: You are a coding agent powered by the {{model}} model.
           - id: agent-instructions
             name: '@deepseek-ai/dsh-agent-instructions'

@@ -34,8 +34,8 @@ test("DSH 客户端可解析包元数据与客户端入口", async () => {
   assert.ok(packageJson.dsh.client);
   const patch = await readFile(new URL("../packages/dsh-moneypal/cordis.patch.yml", import.meta.url), "utf8");
   const patchEntries = patch.replace(/^#.*$/gmu, "");
-  assert.match(patchEntries, /- id: connection\n  inject:\n    - webStartup\n    - webServer(?:\n|$)/u, "connection 必须保留 webStartup 注入并追加 RPC 注册实际使用的 webServer 服务。");
-  assert.doesNotMatch(patchEntries, /webRuntime/u, "connection 不得引用 DSH 0.2.1 已移除的 webRuntime 服务。");
+  assert.doesNotMatch(patchEntries, /^- id: connection\s*$/mu, "bundle 不得修改宿主 connection。");
+  assert.match(patchEntries, /- id: dsh-moneypal\n\s+name: dsh-moneypal/u);
 });
 
 test("发布包包含 MoneyPal 预设补丁并按 bundle 顺序注册", async () => {
@@ -50,6 +50,10 @@ test("发布包包含 MoneyPal 预设补丁并按 bundle 顺序注册", async ()
   const releaseManifest = await packageJson("dsh-moneypal") as { dsh?: { bundle?: { patch?: string[] } } };
   assert.deepEqual(releaseManifest.dsh?.bundle?.patch, expectedSubPatches);
   const patch = await readFile(`${releaseRoot}/dsh-moneypal/presets/moneypal.patch.yml`, "utf8");
+  const promptVariables = new Set(["provider", "model"]);
+  for (const reference of patch.matchAll(/\{\{([^{}]+)\}\}/gu)) {
+    assert.ok(promptVariables.has(reference[1] ?? ""), `MoneyPal 预设引用了宿主未注册的提示词变量：${reference[0]}。`);
+  }
   assert.match(patch, /id: preset-dsh-moneypal\n\s+name: '@deepseek-ai\/dsh-agent-preset'\n\s+config:\n\s+id: dsh-moneypal/u);
   assert.match(patch, /name: MoneyPal\n\s+description: MoneyPal 财务工具与完整 DSH 标准能力\n\s+order: 10/u);
   for (const id of ["persona", "agent-instructions", "tool-bash", "tool-pwsh", "tool-fs", "tool-fs-search", "tool-jobs", "skill-filesystem", "tool-skill", "command-goal", "tool-goal", "planning", "compaction", "delegation", "tool-ask-user", "tool-todo", "tool-web", "present", "tool-plugin-manager"]) {

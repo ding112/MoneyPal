@@ -1,11 +1,4 @@
 # Web profile 的全局只读适配器；客户端入口由 package.json 的 dsh.client 发现。
-# connection 的 RPC 路由经由其提供者 Context 注册（owner.webServer），因此必须为
-# connection 追加 webServer；其余注入名是宿主对该 entry 的既有要求，DSH 0.2.1 已把
-# webRuntime 重命名为 webStartup，升级宿主时必须随宿主同步核对。
-- id: connection
-  inject:
-    - webStartup
-    - webServer
 - insert:
     - id: dsh-moneypal
       name: dsh-moneypal

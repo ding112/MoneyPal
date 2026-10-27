@@ -24,13 +24,12 @@
 - 工具、RPC 通道、system prompt section 和客户端 slot 都使用 `dsh-moneypal` 命名空间下的稳定名称；发布后不得改名。
 - 同层重名必须 fail-loud：DSH/Cordis 对重复注册的官方语义是显式失败。不实现自动换名、覆盖或 fallback。
 - 一切注册必须由 Cordis 生命周期持有：在 `apply(ctx)` 内通过注册 API 或 `ctx.effect` 完成，随插件卸载释放。模块作用域不得创建进程级单例、定时器、句柄或文件副作用。
-- 全局 RPC 适配器固定 `authority: "loopback"`；客户端不能传入账本路径，宿主只从当前已挂载会话解析工作区。
+- 余额适配器通过 `connection.fetch.register` 在 `/api/dsh-moneypal/` 下注册精确路由，复用宿主认证、Host/Origin 检查和 owner Peer 限制。客户端不能指定账本路径；宿主只从当前已挂载会话解析工作区。
 
 ## Bundle 补丁
 
-- `cordis.patch.yml` 只做宿主 entry 的最小必要改动：以 `id` 定向 patch，保留该 entry 在当前 DSH 版本已有的注入与配置，再追加 MoneyPal 需要的服务。
-- `connection.rpc.handle` 的通道路由由 connection 服务提供者所在 Context 注册（`owner.webServer`）；调用方自身声明 `webServer` 不能替代。补丁必须让 `connection` 在宿主既有注入之外追加 `webServer`。DSH 0.2.1-rc.2 的既有注入名是 `webStartup`（0.2.0 及更早为 `webRuntime`）。
-- 不得引用宿主中不存在的服务名：Cordis 会把缺失注入视为依赖未满足，required entry 永久 pending，整次启动失败。升级 DSH 后先运行 `dsh --profile <name> --dump-config` 核对实际 entry，再同步补丁与发布门禁断言。
+- `cordis.patch.yml` 只插入 MoneyPal 自身，不修改宿主 `connection` 或其注入；余额路由使用已有 `/api` 注册表。
+- 每条路由通过 `ctx.effect` 持有，随插件卸载释放；无效 RPC 信封返回固定错误，不暴露内部细节。
 
 ## DSH Web Agent 预设
 
@@ -38,7 +37,7 @@
 - MoneyPal 预设随 `dsh-moneypal` bundle 发布，补丁顺序为宿主 `cordis.patch.yml` 后接 `presets/moneypal.patch.yml`。不得覆盖 `preset-standard`；MoneyPal 预设必须保留被支持 DSH 版本的 standard 插件列表、嵌套分组、隔离设置与禁用条件，再附加 MoneyPal 工具。
 - 预设文件是 DSH `@deepseek-ai/dsh-web-app/presets/standard.patch.yml` 的版本快照。升级 DSH 时必须逐项核对该文件并同步快照，验证 bundle 能被 DSH 组合和新会话加载；发布产物必须包含声明补丁。
 - 0.2.1-rc.2 的 standard 快照包含 `time-context`、`tool-schedule`、`tool-plugin-market`；当前 `presets/moneypal.patch.yml` 仍以 `dsh-moneypal-time-context` 承载 time-context，且缺少 `tool-schedule` 与 `tool-plugin-market`，升级预设时必须逐项同步后再做发布 UI 验收。
-- 安装 bundle 后重启 DSH Web，并在新会话中选择 MoneyPal。`install-preset` 和 `uninstall-preset` 仅为只读兼容命令，不创建、修改或删除 profile 文件；卸载通过移除 bundle 完成。旧目录不自动清理。
+- 安装 bundle 后在新会话中选择 MoneyPal；宿主如提示无法热加载，再按提示重启。`install-preset` 和 `uninstall-preset` 仅为只读兼容命令，不创建、修改或删除 profile 文件；卸载通过移除 bundle 完成。旧目录不自动清理。
 - MoneyPal 运行时与预设注册无关。使用前运行 `runtime-status`；只有 `available` 或 `compatible` 不是 `true` 时才运行 `setup-runtime`。发布门禁仍按本文件验证流程显式准备运行时。
 
 ## 工具契约

@@ -6,7 +6,7 @@
 
 ## 在 DSH 中开始使用
 
-已有 DSH Web（0.1.7-rc.2 或更新版本）后，只需三步：
+已有 DSH Web（0.2.1-rc.2 或更新版本）后，只需三步：
 
 **1. 安装插件**
 
@@ -16,7 +16,7 @@ dsh plugin --profile web add dsh-moneypal
 
 **2. 打开 MoneyPal 会话**
 
-重启 DSH Web 并硬刷新浏览器，选择准备保存账本的文件夹作为工作区，在新会话中选择 **MoneyPal** 预设。
+选择准备保存账本的文件夹作为工作区，在新会话中选择 **MoneyPal** 预设。如果宿主提示需要重启，按提示重启后再继续。
 
 **3. 让助手完成首次准备**
 
@@ -120,20 +120,25 @@ DSH 插件提供以下工具：
 | --- | --- |
 | `invalid_ledger_layout` | 检查 `default/main.beancount`、`default/accounts.beancount`、年度交易文件和 include。 |
 | `runtime_unavailable` | 运行 `runtime-status` 检查；状态不兼容时显式运行 `setup-runtime`。 |
-| 看不到 MoneyPal 预设或抽屉 | 确认 DSH 版本和插件 bundle，重启 DSH Web、硬刷新浏览器，并在新会话中选择 MoneyPal。 |
+| 启用失败：`cannot get property "webServer" without inject` | 检查插件版本；旧版本请更新到 1.0.0-rc.16 或更新版本。 |
+| 看不到 MoneyPal 预设或抽屉 | 确认 DSH 版本及插件组件运行状态，刷新浏览器，并在新会话中选择 MoneyPal。 |
 | `preview_stale` 或预览过期 | 重新查询账本、生成预览并确认。 |
 | `ledger_locked` | 确认没有其他写入进程，再按账本维护流程处理遗留锁。 |
 | `write_outcome_uncertain` | 先查询正式账本核对是否已写入，不要直接重复提交。 |
 
+### 安装后提示 `webServer` 未注入
+
+该错误可能来自旧版 MoneyPal。请检查实际安装的插件版本并升级到 `1.0.0-rc.16` 或更新版本。如果更新后仍出现错误，记录 DSH 版本、插件版本和启动日志，再排查宿主配置。
+
 ## 升级与卸载
 
-升级插件后重启 DSH Web、硬刷新浏览器，并在新会话中选择 MoneyPal：
+升级插件后，在新会话中选择 MoneyPal；如宿主提示需要重启，按提示操作：
 
 ```bash
 dsh plugin --profile web add dsh-moneypal
 ```
 
-卸载前关闭 DSH Web，再移除插件 bundle：
+移除插件 bundle：
 
 ```bash
 dsh plugin --profile web remove dsh-moneypal

@@ -24,15 +24,16 @@ async function workspace(name: string): Promise<string> {
 }
 
 function rpc(sessions: Map<string, { header: { cwd: string } }>) {
-  let handler: ((endpoint: string, payload: unknown, signal: AbortSignal) => Promise<unknown>) | undefined; let options: unknown; const warnings: string[] = []; const disposers: Array<() => void> = []; let unregistered = 0;
-  apply({ sessions: { get: (id) => sessions.get(id) }, connection: { rpc: { handle: (_channel, value, policy) => { handler = value; options = policy; return () => { unregistered += 1; }; } } }, logger: { warn: (message: string) => { warnings.push(message); } }, effect: (callback: () => () => void) => { const dispose = callback(); disposers.push(dispose); return dispose; } });
-  return { call: (endpoint: string, payload: unknown) => handler!(endpoint, payload, new AbortController().signal), options, warnings, disposers, get unregistered(): number { return unregistered; } };
+  const routes = new Map<string, (request: Request) => Promise<Response>>(); const warnings: string[] = []; const disposers: Array<() => void | Promise<void>> = [];
+  const context = { sessions: { get: (id: string) => sessions.get(id) }, connection: { fetch: { register: (route: { path: string; methods: string[]; requestBody: "buffered"; fetch(request: Request): Promise<Response> }) => { assert.deepEqual(route.methods, ["POST"]); assert.equal(route.requestBody, "buffered"); if (routes.has(route.path)) throw new Error("duplicate route"); routes.set(route.path, route.fetch); return () => { routes.delete(route.path); }; } } }, logger: { warn: (message: string) => { warnings.push(message); } }, effect: (callback: () => () => void | Promise<void>) => { const dispose = callback(); disposers.push(dispose); return dispose; } };
+  const start = () => apply(context); start();
+  const request = (endpoint: string, body: string, headers: Record<string, string> = { "content-type": "application/json" }, signal?: AbortSignal) => routes.get(`/api/dsh-moneypal/${endpoint}`)!(new Request(`http://localhost/api/dsh-moneypal/${endpoint}`, { method: "POST", headers, body, signal }));
+  return { request, routes, start, call: async (endpoint: string, payload: unknown, signal?: AbortSignal) => { const response = await request(endpoint, JSON.stringify({ type: "client-request", rpcId: "test-id", method: `dsh-moneypal/${endpoint}`, payload }), undefined, signal); assert.equal(response.status, 200); const envelope = await response.json() as { type: string; rpcId: string; result: unknown }; assert.equal(envelope.type, "server-response"); assert.equal(envelope.rpcId, "test-id"); return envelope.result; }, warnings, disposers };
 }
 
-test("全局 RPC 仅以 live session 的工作区判断账本候选，并限制 loopback", async () => {
+test("余额接口仅以 live session 的工作区判断账本候选", async () => {
   const ledger = await workspace("ledger"); const ordinary = join(root, "ordinary"); await mkdir(ordinary);
   const service = rpc(new Map([["ledger", { header: { cwd: ledger } }], ["ordinary", { header: { cwd: ordinary } }]]));
-  assert.deepEqual(service.options, { authority: "loopback" });
   assert.deepEqual(await service.call("capability", { sessionId: "ledger", cwd: ordinary }), { ok: true, value: { ok: true, value: { candidate: true } } });
   assert.deepEqual(await service.call("capability", { sessionId: "ordinary" }), { ok: true, value: { ok: true, value: { candidate: false } } });
   assert.deepEqual(await service.call("capability", { sessionId: "missing" }), { ok: true, value: { ok: false, error: { code: "session_unavailable", message: "当前会话尚未挂载账本工作区，请稍后重试。", details: {} } } });
@@ -90,12 +91,33 @@ test("运行时不可用时余额查询映射为稳定的设置提示", async ()
   } finally { process.env.MONEYPAL_PYTHON = configured; }
 });
 
-test("Host RPC disposer 纳入 Cordis effect，卸载后通道注销", async () => {
+test("Host 路由随插件卸载并可重新启用", async () => {
   const ledger = await workspace("lifecycle");
   const service = rpc(new Map([["ledger", { header: { cwd: ledger } }]]));
   assert.deepEqual(await service.call("capability", { sessionId: "ledger" }), { ok: true, value: { ok: true, value: { candidate: true } } });
-  assert.equal(service.unregistered, 0);
-  assert.equal(service.disposers.length, 1, "RPC 注册未纳入 ctx.effect");
-  for (const dispose of service.disposers) dispose();
-  assert.equal(service.unregistered, 1);
+  assert.equal(service.routes.size, 2);
+  for (const dispose of service.disposers.splice(0)) await dispose();
+  assert.equal(service.routes.size, 0);
+  service.start();
+  assert.equal(service.routes.size, 2);
+  assert.equal((await service.call("capability", { sessionId: "ledger" }) as { ok: boolean }).ok, true);
+  for (const dispose of service.disposers.splice(0)) await dispose();
+});
+
+test("路由校验 RPC 信封并拒绝无效输入", async () => {
+  const service = rpc(new Map());
+  assert.equal((await service.request("capability", "{}", { "content-type": "text/plain" })).status, 415);
+  assert.equal((await service.request("capability", "{")).status, 400);
+  for (const value of [null, [], {}, { type: "client-request", rpcId: "", method: "dsh-moneypal/capability" }, { type: "client-request", rpcId: "1", method: "dsh-moneypal/balances" }]) {
+    const response = await service.request("capability", JSON.stringify(value));
+    assert.equal(response.status, 400);
+    assert.equal(await response.text(), "invalid request");
+  }
+});
+
+test("余额请求取消信号传递到运行时", async () => {
+  const ledger = await workspace("cancelled"); const service = rpc(new Map([["ledger", { header: { cwd: ledger } }]]));
+  const controller = new AbortController(); controller.abort();
+  const result = await service.call("balances", { sessionId: "ledger", asOf: "2026-08-27" }, controller.signal) as { value: { ok: false; error: { code: string } } };
+  assert.equal(result.value.error.code, "cancelled");
 });

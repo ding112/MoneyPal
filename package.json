@@ -1,6 +1,6 @@
 {
   "name": "moneypal-workspace",
-  "version": "1.0.0-rc.15",
+  "version": "1.0.0-rc.16",
   "private": true,
   "type": "module",
   "description": "MoneyPal 的 DSH 插件工作区。",

@@ -42,7 +42,7 @@ async function reportPresetRegistration(): Promise<void> {
     };
     const bundles = manifest.dsh?.profile?.bundles;
     if (Array.isArray(bundles) && bundles.includes("dsh-moneypal")) {
-      console.log("MoneyPal 预设已随 dsh-moneypal bundle 注册。重启 DSH Web 后，在新会话中选择 MoneyPal。");
+      console.log("MoneyPal 预设已随 dsh-moneypal bundle 注册。在新会话中选择 MoneyPal；如宿主提示需要重启，请按提示操作。");
       return;
     }
   } catch {

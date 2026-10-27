@@ -9,39 +9,59 @@ type BalanceResult = { ok: true; value: unknown } | { ok: false; error: { code: 
 type RpcResult = { ok: true; value: BalanceResult };
 interface HostContext {
   sessions: { get(id: string): LiveSession | undefined };
-  connection: { rpc: { handle(channel: string, handler: (endpoint: string, payload: unknown, signal: AbortSignal) => Promise<RpcResult>, options: { authority: "loopback" }): () => unknown } };
+  connection: { fetch: { register(route: { path: string; methods: string[]; requestBody: "buffered"; fetch(request: Request): Promise<Response> }): () => void | Promise<void> } };
   /** Cordis 内建日志服务：随 Context 必定存在，不写入 inject，直接调用。 */
   logger: { warn(message: string): void };
   /** Cordis 生命周期：注册的 disposer 随插件卸载释放。 */
-  effect(callback: () => () => void, name?: string): unknown;
+  effect(callback: () => () => void | Promise<void>, name?: string): unknown;
 }
 
 export const name = "dsh-moneypal";
-// RPC 路由在 connection 的提供者 Context 上注册（owner.webServer），
-// 因此 webServer 由 bundle patch 追加给 connection，而不是本入口的 inject。
 export const inject = ["sessions", "connection"];
 
 /** Web profile 的全局只读入口；Agent 工具仍由 /dsh 提供。 */
 export function apply(ctx: HostContext): void {
-  const disposeRpc = ctx.connection.rpc.handle("/dsh-moneypal", async (endpoint, payload, signal) => {
-    try {
-      const request = readRequest(payload);
-      const session = ctx.sessions.get(request.sessionId);
-      const cwd = session?.header?.cwd;
-      if (typeof cwd !== "string" || !cwd) throw new BalanceRpcError("session_unavailable", "当前会话尚未挂载账本工作区，请稍后重试。");
-      if (endpoint === "capability") return success({ candidate: await exists(join(cwd, "default", "main.beancount")) });
-      if (endpoint === "balances") {
-        if (!request.asOf) throw new BalanceRpcError("malformed_request", "余额日期必须使用 YYYY-MM-DD 格式。");
-        return success(await readBalanceSnapshot(cwd, request.asOf, signal));
-      }
-      throw new BalanceRpcError("malformed_request", "不支持的余额请求。");
-    } catch (error) {
-      const safe = safeError(error);
-      ctx.logger.warn(`dsh-moneypal balance RPC ${safe.code}`);
-      return { ok: true, value: { ok: false, error: { code: safe.code, message: safe.message, details: {} } } };
+  for (const endpoint of ["capability", "balances"] as const) {
+    const method = `dsh-moneypal/${endpoint}`;
+    ctx.effect(() => ctx.connection.fetch.register({
+      path: `/api/${method}`,
+      methods: ["POST"],
+      requestBody: "buffered",
+      async fetch(request) {
+        if (request.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase() !== "application/json") {
+          return new Response("content type must be application/json", { status: 415 });
+        }
+        let message: unknown;
+        try { message = await request.json(); } catch { return new Response("invalid request", { status: 400 }); }
+        if (!message || typeof message !== "object" || Array.isArray(message)) return new Response("invalid request", { status: 400 });
+        const envelope = message as { type?: unknown; rpcId?: unknown; method?: unknown; payload?: unknown };
+        if (envelope.type !== "client-request" || typeof envelope.rpcId !== "string" || !envelope.rpcId || envelope.method !== method) {
+          return new Response("invalid request", { status: 400 });
+        }
+        const result = await handleBalance(ctx, endpoint, envelope.payload, request.signal);
+        return Response.json({ type: "server-response", rpcId: envelope.rpcId, result });
+      },
+    }), `dsh-moneypal.${endpoint}()`);
+  }
+}
+
+async function handleBalance(ctx: HostContext, endpoint: "capability" | "balances", payload: unknown, signal: AbortSignal): Promise<RpcResult> {
+  try {
+    const request = readRequest(payload);
+    const session = ctx.sessions.get(request.sessionId);
+    const cwd = session?.header?.cwd;
+    if (typeof cwd !== "string" || !cwd) throw new BalanceRpcError("session_unavailable", "当前会话尚未挂载账本工作区，请稍后重试。");
+    if (endpoint === "capability") return success({ candidate: await exists(join(cwd, "default", "main.beancount")) });
+    if (endpoint === "balances") {
+      if (!request.asOf) throw new BalanceRpcError("malformed_request", "余额日期必须使用 YYYY-MM-DD 格式。");
+      return success(await readBalanceSnapshot(cwd, request.asOf, signal));
     }
-  }, { authority: "loopback" });
-  ctx.effect(() => disposeRpc, "dsh-moneypal.rpc()");
+    throw new BalanceRpcError("malformed_request", "不支持的余额请求。");
+  } catch (error) {
+    const safe = safeError(error);
+    ctx.logger.warn(`dsh-moneypal balance RPC ${safe.code}`);
+    return { ok: true, value: { ok: false, error: { code: safe.code, message: safe.message, details: {} } } };
+  }
 }
 
 function success(value: unknown): RpcResult { return { ok: true, value: { ok: true, value } }; }

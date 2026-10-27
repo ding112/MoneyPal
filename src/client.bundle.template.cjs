@@ -349,8 +349,8 @@ window.__ModuleLoader__.load({ id: "dsh-moneypal", factory: (require) => {
     const safeStorage = (() => { try { return window.localStorage; } catch { return undefined; } })();
     const controller = new runtime.BalanceController({
       rpc: {
-        capability: async (sessionId, signal) => { const outer = await ctx.connection.rpc.call("/dsh-moneypal", "capability", { sessionId }, signal); if (!outer?.ok) throw callError(); const inner = outer.value; if (!inner?.ok) throw callError(inner?.error); return Boolean(inner.value?.candidate); },
-        balances: async (sessionId, asOf, signal) => { const outer = await ctx.connection.rpc.call("/dsh-moneypal", "balances", { sessionId, asOf }, signal); if (!outer?.ok) throw callError(); const inner = outer.value; if (!inner?.ok) throw callError(inner?.error); return inner.value; },
+        capability: async (sessionId, signal) => { const outer = await ctx.connection.rpc.call("/api", "dsh-moneypal/capability", { sessionId }, signal); if (!outer?.ok) throw callError(); const inner = outer.value; if (!inner?.ok) throw callError(inner?.error); return Boolean(inner.value?.candidate); },
+        balances: async (sessionId, asOf, signal) => { const outer = await ctx.connection.rpc.call("/api", "dsh-moneypal/balances", { sessionId, asOf }, signal); if (!outer?.ok) throw callError(); const inner = outer.value; if (!inner?.ok) throw callError(inner?.error); return inner.value; },
       },
       storage: safeStorage, visible: () => document.visibilityState === "visible",
     });

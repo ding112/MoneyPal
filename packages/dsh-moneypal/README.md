@@ -4,25 +4,25 @@ MoneyPal 的 DSH Web 插件。它为当前账本工作区提供六个只读财�
 
 ## 安装
 
-前置条件：Node.js 22.18+、DSH 0.1.7-rc.2 或更新版本的 Web profile，以及可用的 MoneyPal 运行时。
+前置条件：Node.js 22.18+、DSH 0.2.1-rc.2 或更新版本的 Web profile，以及可用的 MoneyPal 运行时。
 
 ```bash
 dsh plugin --profile web add dsh-moneypal
 ```
 
-预设随插件 bundle 自动注册。重启 DSH Web 后，在新会话中选择 MoneyPal。
+预设随插件 bundle 自动注册。在新会话中选择 MoneyPal；如宿主提示需要重启，按提示操作。
 
 在 `dsh-market` 中点击 MoneyPal 卡片安装的是 npm 已发布包 `dsh-moneypal`，版本跟随 registry 的 `latest` 标签。本目录（`packages/dsh-moneypal/`）供市场目录发现包名与 `cordis.patch.yml`，不是已构建的安装目录；从本地源码安装请先 `npm run build`，再安装 `dist/packages/dsh-moneypal`。
 
 ## 卸载
 
-先关闭 DSH Web，再按顺序运行：
+移除插件 bundle：
 
 ```bash
 dsh plugin --profile web remove dsh-moneypal
 ```
 
-重启 DSH Web 后，预设从新会话列表中移除。旧版遗留的 `.agent-presets/dsh-moneypal` 目录会被新版 DSH 忽略，本插件不会自动删除。共享 MoneyPal 运行时不会随 bundle 移除。
+移除后，预设从新会话列表中移除。旧版遗留的 `.agent-presets/dsh-moneypal` 目录会被新版 DSH 忽略，本插件不会自动删除。共享 MoneyPal 运行时不会随 bundle 移除。
 
 ## 初始化账本
 

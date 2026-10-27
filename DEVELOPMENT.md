@@ -26,3 +26,5 @@ npm run test:release
 根工作区标记为 `private`，不可直接发布。Release 工作流验证版本与 tag，构建并验收单个 DSH tarball，再通过 npm OIDC Trusted Publishing 发布到 `next`。稳定版的 `latest` 提升由维护者运行 `npm run release:promote`；发布前确认工作树干净，并完成 DSH Web 的真实宿主验收。
 
 DSH 插件规范见 [开发规范](docs/agents/dsh-plugin-development.md)。
+
+`1.0.0-rc.16` 将余额接口迁到宿主 `/api/dsh-moneypal/`，前后端同步更新，旧 `/dsh-moneypal` RPC 通道不再提供。
