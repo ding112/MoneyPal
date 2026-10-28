@@ -32,7 +32,8 @@
     "dist/src",
     "!dist/src/**/*.js.map",
     "cordis.patch.yml",
-    "presets/moneypal.patch.yml"
+    "presets/moneypal.patch.yml",
+    "CORE-PROVENANCE.json"
   ],
   "dsh": {
     "bundle": {

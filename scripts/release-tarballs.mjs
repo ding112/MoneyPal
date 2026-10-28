@@ -1,9 +1,10 @@
 import { execFile } from "node:child_process";
-import { access, mkdir, mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import { sha256, verifyCore } from "./core-files.mjs";
 import { exportTarballs, filesUnder, integrity } from "./release-utils.mjs";
 
 const exec = promisify(execFile);
@@ -19,7 +20,13 @@ try {
   const packed = await Promise.all(packages.map(pack));
   for (const item of packed) await audit(item);
   for (const item of packed) item.integrity = integrity(await readFile(item.tarball));
-  if (output) await exportTarballs(packed, output);
+  if (output) {
+    await exportTarballs(packed, output);
+    const { stdout: commit } = await exec("git", ["rev-parse", "HEAD"], {cwd:root});
+    const { stdout: dirty } = await exec("git", ["status", "--porcelain"], {cwd:root});
+    const item=packed[0];
+    await writeFile(join(output,"candidate.json"),`${JSON.stringify({schemaVersion:1,name:item.name,version:expectedVersion,sourceCommit:commit.trim(),sourceTreeClean:dirty.trim().length===0,filename:item.tarball.split(/[\\/]/u).pop(),sha256:sha256(await readFile(item.tarball)),integrity:item.integrity},null,2)}\n`);
+  }
   console.log(JSON.stringify({ ok: true, version: expectedVersion, output: output ?? null, packages: packed.map(({ name, tarball, files, integrity: sha512 }) => ({ name, tarball, files, integrity: sha512 })) }, null, 2));
 } finally {
   await rm(temporary, { recursive: true, force: true });
@@ -33,7 +40,7 @@ async function pack(name) {
 }
 
 async function audit(item) {
-  const required = ["README.md", "dist/src/finance/bridge.py", "dist/src/client.bundle.cjs"];
+  const required = ["README.md", "dist/src/core/dist/src/finance/bridge.py", "dist/src/client.bundle.cjs"];
   required.forEach((file) => assert(item.files.includes(file), `${item.name} tarball 缺少 ${file}。`));
   item.files.forEach((file) => assert(!/^(?:test|src)\//u.test(file) && (!file.endsWith(".ts") || file.endsWith(".d.ts")) && !file.endsWith(".map"), `${item.name} tarball 包含开发残留 ${file}。`));
   const install = join(temporary, `${item.name}-install`);
@@ -45,6 +52,9 @@ async function audit(item) {
   const manifest = JSON.parse(await readFile(join(packageDirectory, "package.json"), "utf8"));
   assert(manifest.version === expectedVersion, `${item.name} 隔离安装的版本错误。`);
   await assertNoSourceMaps(packageDirectory, item.name);
+  const provenance = JSON.parse(await readFile(join(packageDirectory,"CORE-PROVENANCE.json"),"utf8"));
+  await verifyCore(join(packageDirectory,"dist","src","core"),provenance.sourceRecordSha256);
+  assert(!item.files.some((file) => file.startsWith("dist/src/finance/") || file === "dist/src/init-ledger.js"), "安装包不得携带旧实现。");
   await run(process.execPath, [join(install, "node_modules", ".bin", item.name), "runtime-status"], install);
   await assertExportsLoadable(install, item.name, manifest.exports);
   await access(join(install, "node_modules", item.name, "dist", "src", "client.bundle.cjs"));

@@ -17,3 +17,7 @@ src/prototypes/
 .zcode/
 demos/
 docs/demo
+
+.core-input/
+src/core/
+src/core-provenance.json

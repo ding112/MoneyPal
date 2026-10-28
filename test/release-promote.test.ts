@@ -34,9 +34,9 @@ if (args[0] === "pack") {
   const destination = args[args.indexOf("--pack-destination") + 1];
   const staging = join(destination, name + "-staging");
   rmSync(staging, { recursive: true, force: true });
-  mkdirSync(join(staging, "package", "dist", "src", "finance"), { recursive: true });
+  mkdirSync(join(staging, "package", "dist", "src", "core", "dist", "src", "finance"), { recursive: true });
   writeFileSync(join(staging, "package", "package.json"), JSON.stringify({ name, version, exports: { ".": "./index.js", "./package.json": "./package.json" } }));
-  writeFileSync(join(staging, "package", "dist", "src", "finance", "bridge.py"), process.env.FAKE_NPM_BRIDGE || "");
+  writeFileSync(join(staging, "package", "dist", "src", "core", "dist", "src", "finance", "bridge.py"), process.env.FAKE_NPM_BRIDGE || "");
   const filename = name + "-" + version + ".tgz";
   execFileSync("tar", ["-czf", join(destination, filename), "-C", staging, "package"]);
   rmSync(staging, { recursive: true, force: true });
@@ -66,8 +66,8 @@ async function fixture(t: TestContext, variant: "rc" | "stable") {
   await copyFile(`${workspace}/scripts/release-promote.mjs`, join(root, "scripts", "release-promote.mjs"));
   await copyFile(`${workspace}/scripts/release-utils.mjs`, join(root, "scripts", "release-utils.mjs"));
   await copyFile(`${workspace}/test/fixtures/release-promote-${variant}/package.json`, join(root, "package.json"));
-  await mkdir(join(root, "dist", "packages", "dsh-moneypal", "dist", "src", "finance"), { recursive: true });
-  await writeFile(join(root, "dist", "packages", "dsh-moneypal", "dist", "src", "finance", "bridge.py"), bridge);
+  await mkdir(join(root, "dist", "packages", "dsh-moneypal", "dist", "src", "core", "dist", "src", "finance"), { recursive: true });
+  await writeFile(join(root, "dist", "packages", "dsh-moneypal", "dist", "src", "core", "dist", "src", "finance", "bridge.py"), bridge);
 
   await writeFile(join(bin, "npm"), shim);
   await chmod(join(bin, "npm"), 0o755);

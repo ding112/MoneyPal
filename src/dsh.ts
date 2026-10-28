@@ -7,11 +7,11 @@ import {
   READ_ONLY_TOOL_DEFINITIONS,
   WRITE_TOOL_PARAMETERS,
   type ToolDefinition,
-} from "./finance/contract.js";
-import { asFinanceError, FinanceError } from "./finance/errors.js";
-import { createLedgerEngine } from "./finance/engine.js";
-import { createConfirmedTransactionWriter } from "./finance/write.js";
-import { initializeLedger, planLedgerInitialization } from "./init-ledger.js";
+} from "./product-contract.js";
+import { asFinanceError, FinanceError } from "./core/dist/src/contracts.js";
+import { createLedgerEngine } from "./core/dist/src/ledger.js";
+import { createConfirmedTransactionWriter } from "./core/dist/src/write.js";
+import { initializeLedger, planLedgerInitialization } from "./core/dist/src/init.js";
 
 type ToolArguments = Record<string, unknown>;
 

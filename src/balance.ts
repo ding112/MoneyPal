@@ -1,7 +1,7 @@
-import { createLedgerEngine } from "./finance/engine.js";
-import { FinanceError } from "./finance/errors.js";
-import type { AccountAmounts, BalanceResult, MoneyAmount } from "./finance/types.js";
-import { dayAfter } from "./finance/date.js";
+import { createLedgerEngine } from "./core/dist/src/ledger.js";
+import { FinanceError } from "./core/dist/src/contracts.js";
+import type { AccountAmounts, BalanceResult, MoneyAmount } from "./core/dist/src/ledger.js";
+import { dayAfter } from "./product-date.js";
 
 export { dayAfter };
 

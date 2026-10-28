@@ -112,3 +112,13 @@ DSH 和 Skill 的确认方式及完整操作步骤见[账单导入指南](docs/u
 ## 致谢
 
 感谢 [Linux.do](https://linux.do/) 社区对本项目的推广与宝贵反馈。
+
+## 本地共享核心迁移分支
+
+本分支构建前需要取得已验收的 `@ding112/moneypal-core@1.0.0-migration.0` 本地候选。将同一候选目录中的 tgz、`candidate.json` 和 `CORE-SOURCE.json` 放入被忽略的 `.core-input/`，再运行 `npm ci`。候选 SHA-256 为 `282182e303cf7084adaaf2d7a02ba942eb2967d72ec78d725e370dce4b7c3ee9`。本机交付位置见迁移工单的核心报告；文件不能从历史核心工作区重新打包替代。
+
+`npm run core:stage` 校验锁文件、候选和全部核心文件后生成 `src/core/`。`typecheck` 与构建均自动执行该步骤。发布包只装入已验收核心，保留包内相对导入及逐文件摘要。`src/finance/` 和 `src/init-ledger.ts` 仅保留用于旧行为对照，`npm run test:legacy:built` 在已有开发构建上执行这些检查。正常产品入口不使用旧实现。
+
+`npm run acceptance:migration -- --baseline <旧tgz> --candidate <新tgz> --core <核心tgz> --reports <报告目录> --python <解释器绝对路径> --prepare-runtime` 只验收指定安装包，不构建或打包。每个 tgz 目录都需要匹配的 `candidate.json` 来源及摘要记录。新旧包在隔离安装及独立的合成验收账本上比较。确认由验收程序显式提供，真实 DSH 宿主验收仍须后续执行。
+
+此分支仅用于本地迁移。公共依赖与后续 CI、宿主验收完成前，不切换公开默认分支。

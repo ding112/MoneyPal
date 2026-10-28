@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { after, before, test } from "node:test";
 import { apply } from "../src/host.js";
 import { readBalanceSnapshot } from "../src/balance.js";
-import { FinanceError } from "../src/finance/errors.js";
+import { FinanceError } from "../src/core/dist/src/contracts.js";
 
 let root: string; let runtime: string; let originalPython: string | undefined;
 before(async () => { root = await mkdtemp(join(tmpdir(), "dsh-moneypal-balance-")); runtime = join(root, "runtime.sh"); await writeFile(runtime, `#!/bin/sh

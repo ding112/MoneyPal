@@ -43,7 +43,7 @@
 ## 工具契约
 
 - `ctx.tools.register` 必须提供完整 JSON Schema：`parameters` 与 `output` 都写出字段级约束，不用空 schema 交差。
-- `src/finance/contract.ts` 定义 DSH 财务工具的领域契约。
+- `src/product-contract.ts` 定义 DSH 特有日期读取与工具映射，共同契约来自已验收核心。`src/finance/contract.ts` 仅保留为迁移对照。
 - 工具名、参数名、错误码和输出字段是公开契约：只能新增，不能改名或删除；破坏性变更必须升版本并在发布说明中声明。
 - 错误统一使用 `FinanceError` 与 `errorResponse` 的结构化形状：`code` 加 `message`，需要修复指引时附 `diagnostics`。
 

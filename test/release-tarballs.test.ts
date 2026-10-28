@@ -17,7 +17,7 @@ const { exportTarballs } = (await import(pathToFileURL(join(workspace, "scripts"
 // 假 npm 只负责 pack/init/install，用来在不触碰真实 registry 与宿主运行时的前提下走完 tarball 验收。
 const shim = `#!/usr/bin/env node
 const { execFileSync } = require("node:child_process");
-const { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } = require("node:fs");
+const { appendFileSync, cpSync, chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } = require("node:fs");
 const { dirname, join } = require("node:path");
 
 const args = process.argv.slice(2);
@@ -27,7 +27,7 @@ const [command] = args;
 if (command === "pack") {
   const manifest = JSON.parse(readFileSync(join(process.cwd(), "package.json"), "utf8"));
   const destination = args[args.indexOf("--pack-destination") + 1];
-  const files = ["README.md", "package.json", "index.js", "index.d.ts", "dist/src/finance/bridge.py", "dist/src/client.bundle.cjs", "cordis.patch.yml", "presets/moneypal.patch.yml"];
+  const files = ["README.md", "package.json", "index.js", "index.d.ts", "dist/src/core/dist/src/finance/bridge.py", "CORE-PROVENANCE.json", "dist/src/client.bundle.cjs", "cordis.patch.yml", "presets/moneypal.patch.yml"];
   const staging = join(destination, manifest.name + "-pack");
   rmSync(staging, { recursive: true, force: true });
   for (const file of files) {
@@ -65,6 +65,8 @@ if (command === "install") {
   writeFileSync(join(target, "README.md"), "fixture\\n");
   writeFileSync(join(target, "dist", "src", "finance", "bridge.py"), "fixture content\\n");
   writeFileSync(join(target, "dist", "src", "client.bundle.cjs"), "module.exports = {};\\n");
+  cpSync(process.env.FAKE_CORE_SOURCE, join(target,"dist","src","core"), {recursive:true});
+  cpSync(process.env.FAKE_CORE_PROVENANCE, join(target,"CORE-PROVENANCE.json"));
   const bin = join(process.cwd(), "node_modules", ".bin");
   mkdirSync(bin, { recursive: true });
   writeFileSync(join(bin, name), "process.exit(0);\\n");
@@ -86,7 +88,7 @@ async function runTarballs(t: TestContext, extra: Record<string, string>) {
   try {
     const { stdout } = await execute(process.execPath, [join(workspace, "scripts", "release-tarballs.mjs")], {
       cwd: workspace,
-      env: { ...process.env, PATH: `${bin}:${process.env.PATH ?? ""}`, MONEYPAL_TARBALL_OUTPUT: output, ...extra },
+      env: { ...process.env, PATH: `${bin}:${process.env.PATH ?? ""}`, MONEYPAL_TARBALL_OUTPUT: output, FAKE_CORE_SOURCE: join(workspace,"dist","src","core"), FAKE_CORE_PROVENANCE: join(workspace,"dist","src","core-provenance.json"), ...extra },
     });
     return { code: 0, stdout, output };
   } catch (error) {
@@ -125,7 +127,7 @@ test("验收通过时把 DSH tgz 导出到 MONEYPAL_TARBALL_OUTPUT 且字节与�
   assert.equal(report.packages.length, 1);
   const dsh = report.packages.find((item) => item.name === "dsh-moneypal");
   assert.ok(dsh?.files.includes("presets/moneypal.patch.yml"), "DSH tarball 必须包含自动注册 MoneyPal 预设的补丁。");
-  assert.deepEqual((await readdir(result.output)).sort(), report.packages.map((item) => basename(item.tarball)).sort());
+  assert.deepEqual((await readdir(result.output)).filter((file)=>file.endsWith(".tgz")).sort(), report.packages.map((item) => basename(item.tarball)).sort());
   for (const item of report.packages) {
     const bytes = await readFile(join(result.output, basename(item.tarball)));
     assert.equal(`sha512-${createHash("sha512").update(bytes).digest("base64")}`, item.integrity, "导出文件必须与验收过的 tgz 字节一致。");

@@ -5,9 +5,9 @@
   "type": "module",
   "description": "MoneyPal 的 DSH 插件工作区。",
   "scripts": {
-    "build:base": "node scripts/clean-build.mjs && tsc -p tsconfig.json && node scripts/copy-bridge.mjs && node scripts/build-client-bundle.mjs && node --check dist/src/client.bundle.cjs",
+    "build:base": "node scripts/clean-build.mjs && npm run core:stage && tsc -p tsconfig.json && node scripts/copy-bridge.mjs && node scripts/copy-core.mjs && node scripts/build-client-bundle.mjs && node --check dist/src/client.bundle.cjs",
     "build": "npm run build:base && node scripts/build-release-packages.mjs",
-    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "typecheck": "npm run core:stage && tsc --noEmit -p tsconfig.json",
     "install-preset": "node dist/src/main.js install-preset",
     "uninstall-preset": "node dist/src/main.js uninstall-preset",
     "test:fast:built": "node --test dist/test/client-core.test.js dist/test/client-bundle.test.js dist/test/init-ledger.test.js dist/test/register-contract.test.js dist/test/statements-contract.test.js",
@@ -26,11 +26,15 @@
     "test:release": "npm run build && npm run verify:release:built",
     "release:acceptance": "node scripts/release-acceptance.mjs",
     "release:promote": "node scripts/release-promote.mjs",
-    "publish:dsh": "npm run build && npm publish ./dist/packages/dsh-moneypal --access public --tag next"
+    "publish:dsh": "npm run build && npm publish ./dist/packages/dsh-moneypal --access public --tag next",
+    "core:stage": "node scripts/stage-core.mjs",
+    "test:legacy:built": "node --test --test-concurrency=1 dist/test/init-ledger.test.js dist/test/statements-contract.test.js dist/test/bridge-process.test.js dist/test/confirmed-write.test.js dist/test/write-interruption.test.js dist/test/beancount-runtime.test.js dist/test/write-runtime.test.js dist/test/statements-runtime.test.js",
+    "acceptance:migration": "node scripts/acceptance-migration.mjs"
   },
   "devDependencies": {
     "@types/node": "^24.13.3",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "@ding112/moneypal-core": "file:.core-input/ding112-moneypal-core-1.0.0-migration.0.tgz"
   },
   "engines": {
     "node": ">=22.18"

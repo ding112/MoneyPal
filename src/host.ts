@@ -1,8 +1,8 @@
 import { access } from "node:fs/promises";
 import { join } from "node:path";
 import { readBalanceSnapshot } from "./balance.js";
-import { FinanceError } from "./finance/errors.js";
-import { readAbsoluteDate } from "./finance/date.js";
+import { FinanceError } from "./core/dist/src/contracts.js";
+import { readAbsoluteDate } from "./core/dist/src/contracts.js";
 
 type LiveSession = { header?: { cwd?: unknown } };
 type BalanceResult = { ok: true; value: unknown } | { ok: false; error: { code: string; message: string; details: Record<string, never> } };

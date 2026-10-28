@@ -3,8 +3,8 @@
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
-import { initializeLedger } from "./init-ledger.js";
-import { inspectRuntime, setupRuntime } from "./finance/runtime.js";
+import { initializeLedger } from "./core/dist/src/init.js";
+import { inspectRuntime, setupRuntime } from "./core/dist/src/runtime.js";
 import { parseSetupArguments } from "./cli/runtime-arguments.js";
 
 async function main(): Promise<void> {
