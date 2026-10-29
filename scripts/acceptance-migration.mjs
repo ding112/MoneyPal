@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { integrity, sha256, verifyCore } from "./core-files.mjs";
 const exec=promisify(execFile), root=fileURLToPath(new URL("..",import.meta.url));
-const args={}, report={schemaVersion:1,milestone:"M2",status:"failed",product:"dsh-moneypal",productVersion:null,productCommit:null,coreVersion:null,coreIntegrity:null,candidateSha256:null,baselineSha256:null,platform:process.platform,arch:process.arch,node:process.version,python:null,requiredChecks:["输入来源及摘要","实际核心文件一致且无旧实现","隔离安装的类型入口","隔离运行时及新旧包完整财务与确认对照"],passedChecks:[],failedChecks:[],pendingChecks:["公共来源、CI、最低Node和真实DSH宿主留待后续，不计作本地通过"]};
+const args={}, report={schemaVersion:1,milestone:"M4-local",status:"failed",product:"dsh-moneypal",productVersion:null,productCommit:null,coreVersion:null,coreIntegrity:null,candidateSha256:null,baselineSha256:null,platform:process.platform,arch:process.arch,node:process.version,python:null,requiredChecks:["输入来源及摘要","实际核心文件一致且无旧实现","隔离安装的类型入口","隔离运行时及新旧包完整财务与确认对照"],passedChecks:[],failedChecks:[],pendingChecks:["当前用户范围为本地冻结包引用；公开来源、Ubuntu CI和真实DSH宿主未验证，不计作本地通过"]};
 let temporary, check=report.requiredChecks[0];
 try {
   for(let index=2;index<process.argv.length;index++) {

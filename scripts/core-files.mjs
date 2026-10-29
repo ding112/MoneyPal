@@ -17,7 +17,7 @@ export async function verifyCore(directory, expectedRecordHash) {
   const bytes = await readFile(join(directory, "CORE-SOURCE.json"));
   if (expectedRecordHash && sha256(bytes) !== expectedRecordHash) throw new Error("核心来源记录摘要不匹配。");
   const record = JSON.parse(bytes);
-  if (record.schemaVersion !== 1 || record.name !== "@ding112/moneypal-core" || record.version !== "1.0.0-migration.0" || !record.files) throw new Error("核心来源记录无效。");
+  if (record.schemaVersion !== 1 || record.name !== "@ding112/moneypal-core" || typeof record.version !== "string" || record.version.length === 0 || !record.files) throw new Error("核心来源记录无效。");
   const files = await coreFiles(directory); delete files["CORE-SOURCE.json"];
   if (JSON.stringify(Object.entries(files).sort()) !== JSON.stringify(Object.entries(record.files).sort())) throw new Error("核心文件摘要不匹配。");
   return record;

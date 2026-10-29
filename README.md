@@ -115,7 +115,7 @@ DSH 和 Skill 的确认方式及完整操作步骤见[账单导入指南](docs/u
 
 ## 本地共享核心迁移分支
 
-本分支构建前需要取得已验收的 `@ding112/moneypal-core@1.0.0-migration.0` 本地候选。将同一候选目录中的 tgz、`candidate.json` 和 `CORE-SOURCE.json` 放入被忽略的 `.core-input/`，再运行 `npm ci`。候选 SHA-256 为 `282182e303cf7084adaaf2d7a02ba942eb2967d72ec78d725e370dce4b7c3ee9`。本机交付位置见迁移工单的核心报告；文件不能从历史核心工作区重新打包替代。
+本分支构建前需要取得已验收的 `@ding112/moneypal-core@1.0.0-rc.1` 本地候选。将同一候选目录中的 tgz、`candidate.json` 和 `CORE-SOURCE.json` 放入被忽略的 `.core-input/`，再运行 `npm ci`。候选 SHA-256 为 `7ebf0fca3a2617a377b7d9a2f00c23d351c38f50d69942c5c78a3bbce610f174`。本机交付位置见迁移工单的 public-core-rc/candidate；rc.1 在本轮仅作为已验收的本地冻结包使用，未公开发布；文件不能从历史核心工作区重新打包替代。
 
 `npm run core:stage` 校验锁文件、候选和全部核心文件后生成 `src/core/`。`typecheck` 与构建均自动执行该步骤。发布包只装入已验收核心，保留包内相对导入及逐文件摘要。`src/finance/` 和 `src/init-ledger.ts` 仅保留用于旧行为对照，`npm run test:legacy:built` 在已有开发构建上执行这些检查。正常产品入口不使用旧实现。
 
