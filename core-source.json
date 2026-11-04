@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "name": "moneypal-core",
+  "version": "1.0.0-rc.1",
+  "sourceCommit": "76adea827b5a6f7ab045771e48225ad8bac084a4",
+  "sourceTreeClean": true,
+  "filename": "moneypal-core-1.0.0-rc.1.tgz",
+  "sha256": "84a6b4a9610550afe6d74644baa5844100fba99e04eb4dae6f3b0b6fedd1d455",
+  "integrity": "sha512-re86dSAel2eKp52dVqy0vOzUL5GhL8JhvNlV70VkRzbbqwWSyqgW0DfSwoPDU3C5+Ep1ykf0QcPFbdo7+6H1Fw==",
+  "sourceRecordSha256": "ad311d5e5c2e29806338e3259cb776ce5ede38c57dc36404ad24e8a17925dd2c",
+  "tools": {
+    "node": "v24.14.0",
+    "npm": "11.14.1",
+    "typescript": "5.9.3",
+    "esbuild": "0.28.2",
+    "python": "3.11.11"
+  },
+  "registry": "https://registry.npmjs.org/",
+  "tarball": "https://registry.npmjs.org/moneypal-core/-/moneypal-core-1.0.0-rc.1.tgz"
+}

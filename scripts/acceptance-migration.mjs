@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { integrity, sha256, verifyCore } from "./core-files.mjs";
 const exec=promisify(execFile), root=fileURLToPath(new URL("..",import.meta.url));
-const args={}, report={schemaVersion:1,milestone:"M4-local",status:"failed",product:"dsh-moneypal",productVersion:null,productCommit:null,coreVersion:null,coreIntegrity:null,candidateSha256:null,baselineSha256:null,platform:process.platform,arch:process.arch,node:process.version,python:null,requiredChecks:["输入来源及摘要","实际核心文件一致且无旧实现","隔离安装的类型入口","隔离运行时及新旧包完整财务与确认对照"],passedChecks:[],failedChecks:[],pendingChecks:["当前用户范围为本地冻结包引用；公开来源、Ubuntu CI和真实DSH宿主未验证，不计作本地通过"]};
+const args={}, report={schemaVersion:1,milestone:"M4-public",status:"failed",product:"dsh-moneypal",productVersion:null,productCommit:null,coreVersion:null,coreIntegrity:null,candidateSha256:null,baselineSha256:null,platform:process.platform,arch:process.arch,node:process.version,python:null,requiredChecks:["输入来源及摘要","实际核心文件一致且无旧实现","隔离安装的类型入口","隔离运行时及新旧包完整财务与确认对照"],passedChecks:[],failedChecks:[],pendingChecks:["公共来源已独立验证；Ubuntu CI和真实DSH宿主由独立任务记录，不计作本机已通过"]};
 let temporary, check=report.requiredChecks[0];
 try {
   for(let index=2;index<process.argv.length;index++) {
@@ -23,7 +23,7 @@ try {
   for(const name of ["baseline","candidate","core"]) {
     const bytes=await readFile(args[name]); const record=JSON.parse(await readFile(join(dirname(args[name]),"candidate.json"),"utf8"));
     assert.equal(record.schemaVersion,1); assert.equal(record.filename,basename(args[name])); assert.equal(record.sha256,sha256(bytes)); assert.equal(record.integrity,integrity(bytes));
-    assert.equal(record.name,name==="core"?"@ding112/moneypal-core":"dsh-moneypal"); records[name]=record;
+    assert.equal(record.name,name==="core"?"moneypal-core":"dsh-moneypal"); records[name]=record;
   }
   Object.assign(report,{productVersion:records.candidate.version,productCommit:records.candidate.sourceCommit,coreVersion:records.core.version,coreIntegrity:records.core.integrity,candidateSha256:records.candidate.sha256,baselineSha256:records.baseline.sha256}); report.passedChecks.push(check);
   temporary=await mkdtemp(join(tmpdir(),"moneypal-dsh-migration-")); const home=join(temporary,"home"); await mkdir(home);

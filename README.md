@@ -113,12 +113,12 @@ DSH 和 Skill 的确认方式及完整操作步骤见[账单导入指南](docs/u
 
 感谢 [Linux.do](https://linux.do/) 社区对本项目的推广与宝贵反馈。
 
-## 本地共享核心迁移分支
+## 共享核心构建
 
-本分支构建前需要取得已验收的 `@ding112/moneypal-core@1.0.0-rc.1` 本地候选。将同一候选目录中的 tgz、`candidate.json` 和 `CORE-SOURCE.json` 放入被忽略的 `.core-input/`，再运行 `npm ci`。候选 SHA-256 为 `7ebf0fca3a2617a377b7d9a2f00c23d351c38f50d69942c5c78a3bbce610f174`。本机交付位置见迁移工单的 public-core-rc/candidate；rc.1 在本轮仅作为已验收的本地冻结包使用，未公开发布；文件不能从历史核心工作区重新打包替代。
+开发依赖固定为公开的 `moneypal-core@1.0.0-rc.1`。干净 checkout 运行 `npm ci` 即可取得全部构建输入，不需要本地核心 tarball 或私有源码。`core-source.json` 保存公开 registry、版本、tarball 摘要和源码来源；锁文件固定下载 URL 与 integrity。
 
-`npm run core:stage` 校验锁文件、候选和全部核心文件后生成 `src/core/`。`typecheck` 与构建均自动执行该步骤。发布包只装入已验收核心，保留包内相对导入及逐文件摘要。`src/finance/` 和 `src/init-ledger.ts` 仅保留用于旧行为对照，`npm run test:legacy:built` 在已有开发构建上执行这些检查。正常产品入口不使用旧实现。
+`npm run core:stage` 检查精确依赖、锁文件、来源记录和全部已安装核心文件，再生成 `src/core/`。类型检查及构建均执行此步骤；完整构建在复用缓存前也重新检查输入。发布包保持包内相对导入，原样包含核心、声明、Python 资源和来源记录，不增加 npm 运行时依赖。
 
-`npm run acceptance:migration -- --baseline <旧tgz> --candidate <新tgz> --core <核心tgz> --reports <报告目录> --python <解释器绝对路径> --prepare-runtime` 只验收指定安装包，不构建或打包。每个 tgz 目录都需要匹配的 `candidate.json` 来源及摘要记录。新旧包在隔离安装及独立的合成验收账本上比较。确认由验收程序显式提供，真实 DSH 宿主验收仍须后续执行。
+`src/finance/` 和 `src/init-ledger.ts` 保留用于旧行为对照，`npm run test:legacy:built` 在已有开发构建上执行这些检查。正常产品入口不使用旧实现。
 
-此分支仅用于本地迁移。公共依赖与后续 CI、宿主验收完成前，不切换公开默认分支。
+`npm run acceptance:migration -- --baseline <旧tgz> --candidate <新tgz> --core <公开下载核心tgz> --reports <报告目录> --python <解释器绝对路径> --prepare-runtime` 验收指定安装包，不构建或打包。每个 tgz 目录都需要匹配的 `candidate.json` 来源及摘要记录。新旧包在隔离安装及独立的合成验收账本上比较。确认由验收程序显式提供，真实 DSH 宿主验收单独记录。
