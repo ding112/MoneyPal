@@ -98,7 +98,7 @@
 
 - 单次小改动：`npm run build:base` 后运行对应的 `dist/test/<文件>.test.js`，例如 `npm run build:base && node --test dist/test/balance-host.test.js`。`build:base` 会清空 `dist`，构建产物只对应最后一次源码，修改后不能省略重新编译。
 - 阶段性快速验证：`npm run test:fast`；合并前：`npm test`；涉及发布、包入口、Schema、注入、宿主注册、依赖或发布流程的改动：`npm run test:release`。
-- `build:base` 清空 `dist` 并生成基础产物；`npm run build` 额外装配 DSH 发布包。任何 `:built` 命令要求对应构建刚完成。
+- `build:base` 清空 `dist` 并生成基础产物；`npm run build` 额外装配 DSH 发布包。完整构建记录源码、测试、构建脚本、包资源、清单、工具链与产物的内容摘要。只有输入与产物都未改变时才复用；删除或改坏产物会触发重新构建。需要强制清理时先运行 `npm run build:base`。任何 `:built` 命令要求对应构建刚完成或刚通过完整构建的内容校验。
 - 本地集成（`npm test`）允许在缺失真实运行时时明确跳过依赖该运行时的用例；发布（`npm run test:release`）严格要求真实运行时可用兼容。
 - 发布 UI 验收只在发布前通过 ego-browser skill 执行；日常测试不包含 React/DOM 模拟器或浏览器测试。
 - `npm run test:fast`、`npm test`、`npm run test:release` 三个命令相互包含，不要用它们重复验证同一次修改：按所处阶段选择相应的最高层级即可；单独诊断失败文件时不受此限制。
@@ -119,3 +119,11 @@
 7. 卸载插件后入口、抽屉消失，样式移除。
 
 正式发布仍须在干净 checkout 中另行运行 `npm run release:preflight`，并完成 registry 与真实 DSH Web 验证。全部通过后检查最终差异：确认没有 pnpm 文件、构建生成物或公开契约漂移进入提交。
+
+## CI 性能与文档过滤
+
+- Test 对 PR 按编号取消旧运行；main 的每次运行使用独立并发组，不取消已运行或待运行的提交。Release 继续串行验收和发布。
+- Test 对 `**/*.md` 与 `docs/**` 使用 `paths-ignore`。混合源码和文档的提交仍运行全部门禁；tag 发布始终运行全部门禁。
+- 2026-11-04 核对时，main 未启用分支保护，规则集为 disabled，没有必需检查。以后启用必需检查前，必须同步移除 PR 的事件级路径过滤，并用总会返回结果的变更检测和 `test` 汇总检查跳过纯文档测试。不能直接把当前按路径跳过的工作流设为必需，否则文档 PR 会保持 Pending。GitHub 的说明见 [跳过工作流](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/skip-workflow-runs)。
+- Test 与 Release 使用 setup-node 内置 npm 下载缓存，不缓存 `node_modules` 或 `dist`。Python 只缓存真实复用的运行时目录，key 包含操作系统、架构、完整 Python 版本和运行时安装源码摘要；不保存 setup/use 锁，不使用宽松恢复 key。缓存恢复后仍执行 `setup-runtime` 与严格兼容性检查。GitHub runner 的安装步骤显式使用官方 PyPI。
+- 集成测试使用两个独立的 Node 测试进程并行；单文件内部的确认、互斥、取消和中断场景保持原有执行方式。未删除用例或放宽真实运行时要求。
