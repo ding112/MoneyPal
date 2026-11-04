@@ -34,9 +34,10 @@ if (args[0] === "pack") {
   const destination = args[args.indexOf("--pack-destination") + 1];
   const staging = join(destination, name + "-staging");
   rmSync(staging, { recursive: true, force: true });
-  mkdirSync(join(staging, "package", "dist", "src", "finance"), { recursive: true });
+  const finance = process.env.FAKE_NPM_LEGACY === "1" ? join(staging, "package", "dist", "src", "finance") : join(staging, "package", "dist", "src", "core", "dist", "src", "finance");
+  mkdirSync(finance, { recursive: true });
   writeFileSync(join(staging, "package", "package.json"), JSON.stringify({ name, version, exports: { ".": "./index.js", "./package.json": "./package.json" } }));
-  writeFileSync(join(staging, "package", "dist", "src", "finance", "bridge.py"), process.env.FAKE_NPM_BRIDGE || "");
+  writeFileSync(join(finance, "bridge.py"), process.env.FAKE_NPM_BRIDGE || "");
   const filename = name + "-" + version + ".tgz";
   execFileSync("tar", ["-czf", join(destination, filename), "-C", staging, "package"]);
   rmSync(staging, { recursive: true, force: true });
@@ -66,8 +67,8 @@ async function fixture(t: TestContext, variant: "rc" | "stable") {
   await copyFile(`${workspace}/scripts/release-promote.mjs`, join(root, "scripts", "release-promote.mjs"));
   await copyFile(`${workspace}/scripts/release-utils.mjs`, join(root, "scripts", "release-utils.mjs"));
   await copyFile(`${workspace}/test/fixtures/release-promote-${variant}/package.json`, join(root, "package.json"));
-  await mkdir(join(root, "dist", "packages", "dsh-moneypal", "dist", "src", "finance"), { recursive: true });
-  await writeFile(join(root, "dist", "packages", "dsh-moneypal", "dist", "src", "finance", "bridge.py"), bridge);
+  await mkdir(join(root, "dist", "packages", "dsh-moneypal", "dist", "src", "core", "dist", "src", "finance"), { recursive: true });
+  await writeFile(join(root, "dist", "packages", "dsh-moneypal", "dist", "src", "core", "dist", "src", "finance", "bridge.py"), bridge);
 
   await writeFile(join(bin, "npm"), shim);
   await chmod(join(bin, "npm"), 0o755);
@@ -163,4 +164,21 @@ test("dist-tag 部分失败时如实报错且不输出整体成功", async (t) =
   assert.deepEqual((await calls()).filter((args) => args[0] === "dist-tag"), [
     ["dist-tag", "add", "dsh-moneypal@1.0.0", "latest"],
   ]);
+});
+
+// 旧布局的稳定包仍可与迁移后本地构建复验；旧测试只生成新布局。
+test("稳定版提升分别识别 registry 与本地旧布局并保留 bridge 摘要门禁", async (t) => {
+  const { root, run, calls } = await fixture(t, "stable");
+  const oldRegistry = await run([], { FAKE_NPM_LEGACY: "1" });
+  assert.equal(oldRegistry.code, 0, oldRegistry.stderr);
+  const current = join(root, "dist", "packages", "dsh-moneypal", "dist", "src", "core", "dist", "src", "finance", "bridge.py");
+  const legacy = join(root, "dist", "packages", "dsh-moneypal", "dist", "src", "finance", "bridge.py");
+  await mkdir(join(legacy, ".."), { recursive: true });
+  await copyFile(current, legacy);
+  await rm(current);
+  assert.equal((await run()).code, 0);
+  const mismatch = await run(["--apply"], { FAKE_NPM_BRIDGE: "different bridge" });
+  assert.equal(mismatch.code, 1);
+  assert.match(mismatch.stderr, /canonical bridge 不一致/u);
+  assert.equal((await calls()).some((args) => args[0] === "dist-tag"), false);
 });

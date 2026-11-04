@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { constants } from "node:fs";
 import { copyFile, mkdir, readdir, readFile } from "node:fs/promises";
 import { basename, join, relative } from "node:path";
 
@@ -23,7 +24,7 @@ export async function exportTarballs(items, directory) {
   await mkdir(directory, { recursive: true });
   return Promise.all(items.map(async (item) => {
     const target = join(directory, basename(item.tarball));
-    await copyFile(item.tarball, target);
+    await copyFile(item.tarball, target, constants.COPYFILE_EXCL);
     return { ...item, exported: target };
   }));
 }

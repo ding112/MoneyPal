@@ -8,9 +8,11 @@ import { spawnSync } from "node:child_process";
 const workspace = fileURLToPath(new URL("..", import.meta.url));
 const stateFile = join(workspace, "dist", ".build-state.json");
 const inputPaths = [
-  "src", "test", "packages", "scripts", "package.json", "package-lock.json", "tsconfig.json",
+  "src", "test", "packages", "scripts", "package.json", "package-lock.json", "core-source.json", "tsconfig.json",
   "node_modules/typescript/package.json", "node_modules/@types/node/package.json",
 ];
+// 缓存命中前也校验公共输入，不能复用被篡改的已安装核心。
+run(["scripts/stage-core.mjs"]);
 const inputs = await fingerprint(inputPaths);
 let previous;
 try { previous = JSON.parse(await readFile(stateFile, "utf8")); } catch (error) {

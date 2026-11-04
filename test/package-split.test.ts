@@ -19,7 +19,10 @@ test("根工作区不可发布且只生成 DSH npm 包", async () => {
   await absent("dsh-moneypal/dist/src/cli/finance.js");
   await present("dsh-moneypal/dist/src/cli/runtime-arguments.js");
   await absent("dsh-moneypal/skills");
-  await present("dsh-moneypal/dist/src/finance/bridge.py");
+  await present("dsh-moneypal/dist/src/core/dist/src/finance/bridge.py");
+  await present("dsh-moneypal/CORE-PROVENANCE.json");
+  await absent("dsh-moneypal/dist/src/finance");
+  await absent("dsh-moneypal/dist/src/init-ledger.js");
 
   assert.deepEqual(await readdir(releaseRoot), ["dsh-moneypal"], "构建结果只包含 DSH 发布包。");
   await assertPublishedJavaScriptHasNoSourceMap(`${releaseRoot}/dsh-moneypal/dist/src`);

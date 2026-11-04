@@ -6,8 +6,8 @@ import {
   LEDGER_ENGINE_OPERATIONS,
   readRegisterQuery,
   READ_ONLY_TOOL_DEFINITIONS,
-} from "../src/finance/contract.js";
-import type { LedgerEngine, RegisterResult } from "../src/finance/types.js";
+} from "../src/product-contract.js";
+import type { LedgerEngine, RegisterResult } from "../src/core/dist/src/ledger.js";
 import { omitSchemaDescriptions } from "./contract-fixtures.js";
 
 test("完整流水查询使用共享 LedgerEngine 契约，并传递文本和数量限制", async () => {

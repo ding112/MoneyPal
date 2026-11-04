@@ -85,7 +85,7 @@ jobs:
         uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
           path: ~/.local/share/moneypal/runtime
-          key: moneypal-runtime-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.python.outputs.version }}-${{ hashFiles('src/finance/runtime.ts') }}
+          key: moneypal-runtime-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.python.outputs.version }}-${{ hashFiles('core-source.json') }}
 
       - name: Prepare MoneyPal runtime
         env:

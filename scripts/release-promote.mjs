@@ -36,7 +36,7 @@ try {
     await exec("tar", ["-xzf", tarball, "-C", extracted], { env: npmEnv });
     const files = await filesUnder(extracted);
     assert(files.includes("package/package.json"), `${name} 的 registry tarball 缺少 package.json。`);
-    assert(files.includes("package/dist/src/finance/bridge.py"), `${name} 的 registry tarball 缺少 canonical bridge。`);
+    const publishedBridge = canonicalBridge(files, "package/", `${name} 的 registry tarball`);
     const published = JSON.parse(await readFile(join(extracted, "package", "package.json"), "utf8"));
     Object.keys(published.exports ?? {}).forEach((key) => assert(allowedExports.has(key), `${name} 的 registry 包导出了不受支持的入口 ${key}。`));
     for (const file of files) {
@@ -48,7 +48,7 @@ try {
       name,
       version: String(manifest.version),
       currentLatest: manifest["dist-tags"]?.latest ?? null,
-      sha256: hash(await readFile(join(extracted, "package", "dist", "src", "finance", "bridge.py"), "utf8")),
+      sha256: hash(await readFile(join(extracted, publishedBridge), "utf8")),
     });
   }
   assert(results[0].sha256 === (await localBridgeHash()), "registry 稳定包与本地构建的 canonical bridge 不一致；请确认稳定发布与已验证 RC 来源一致。");
@@ -98,5 +98,14 @@ async function pack(name) {
   return join(temporary, result.filename);
 }
 async function localBridgeHash() {
-  return hash(await readFile(join(root, "dist", "packages", "dsh-moneypal", "dist", "src", "finance", "bridge.py"), "utf8"));
+  const directory = join(root, "dist", "packages", "dsh-moneypal");
+  const bridge = canonicalBridge(await filesUnder(directory), "", "本地构建");
+  return hash(await readFile(join(directory, bridge), "utf8"));
+}
+
+function canonicalBridge(files, prefix, label) {
+  const matches = ["dist/src/core/dist/src/finance/bridge.py", "dist/src/finance/bridge.py"]
+    .map((path) => `${prefix}${path}`).filter((path) => files.includes(path));
+  assert(matches.length === 1, `${label} 必须包含一个受支持的 canonical bridge。`);
+  return matches[0];
 }

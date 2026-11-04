@@ -1,4 +1,4 @@
-import type { SetupRuntimeOptions } from "../finance/runtime.js";
+import type { SetupRuntimeOptions } from "../core/dist/src/runtime.js";
 
 /** DSH 运行时安装参数。 */
 export function parseSetupArguments(args: string[]): SetupRuntimeOptions {
