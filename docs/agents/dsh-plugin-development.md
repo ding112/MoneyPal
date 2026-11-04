@@ -126,4 +126,4 @@
 - Test 对 `**/*.md` 与 `docs/**` 使用 `paths-ignore`。混合源码和文档的提交仍运行全部门禁；tag 发布始终运行全部门禁。
 - 2026-11-04 核对时，main 未启用分支保护，规则集为 disabled，没有必需检查。以后启用必需检查前，必须同步移除 PR 的事件级路径过滤，并用总会返回结果的变更检测和 `test` 汇总检查跳过纯文档测试。不能直接把当前按路径跳过的工作流设为必需，否则文档 PR 会保持 Pending。GitHub 的说明见 [跳过工作流](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/skip-workflow-runs)。
 - Test 与 Release 使用 setup-node 内置 npm 下载缓存，不缓存 `node_modules` 或 `dist`。Python 只缓存真实复用的运行时目录，key 包含操作系统、架构、完整 Python 版本和运行时安装源码摘要；不保存 setup/use 锁，不使用宽松恢复 key。缓存恢复后仍执行 `setup-runtime` 与严格兼容性检查。GitHub runner 的安装步骤显式使用官方 PyPI。
-- 集成测试使用两个独立的 Node 测试进程并行；单文件内部的确认、互斥、取消和中断场景保持原有执行方式。未删除用例或放宽真实运行时要求。
+- 集成测试使用四个独立的 Node 测试进程并行；单文件内部的确认、互斥、取消和中断场景保持原有执行方式。未删除用例或放宽真实运行时要求。
