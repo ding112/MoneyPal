@@ -27,7 +27,9 @@ test("Test 工作流只读、固定工具链、只构建一次并先准备运行
   assert.match(workflow, /timeout-minutes: 30/u);
   assert.match(workflow, /^  test:$/mu, "保留 test job 名称，避免改变分支保护的检查名。");
   assert.doesNotMatch(workflow, /^  windows:$/mu, "当前工作流不再运行已移除的 Windows 宿主诊断任务。");
-  assert.match(workflow, /cancel-in-progress: true/u, "同一 ref 的旧任务应被取消。");
+  assert.ok(workflow.includes("group: test-${{ github.event.pull_request.number || github.run_id }}"), "PR 共享并发组，main 的每次运行使用独立组。");
+  assert.ok(workflow.includes("cancel-in-progress: ${{ github.event_name == 'pull_request' }}"), "只取消 PR 的旧运行，保留 main 的每次运行。");
+  assert.equal(count(workflow, /paths-ignore:/gu), 2, "push 和 PR 都过滤纯文档变更。");
 
   assert.match(workflow, /pull_request:\n    types: \[opened, synchronize, reopened\]\n/u);
   assert.doesNotMatch(workflow, /edited/u, "版本不再从提交类型推导，PR 编辑不再触发。");
@@ -57,8 +59,7 @@ test("Release 工作流只接受 v* tag、最小权限、OIDC 发布并复用已
   assert.match(workflow, /node-version: 24/u);
   assert.match(workflow, /npm install -g npm@11\.14\.1/u);
   assert.match(workflow, /registry-url: https:\/\/registry\.npmjs\.org\//u);
-  assert.match(workflow, /package-manager-cache: false/u);
-  assert.doesNotMatch(workflow, /^          cache: npm$/mu, "Release 工作流不启用依赖缓存。");
+  assert.match(workflow, /^          cache: npm$/mu, "Release 复用 setup-node 的 npm 下载缓存。");
   assert.doesNotMatch(workflow, /^    environment:/mu, "本期不绑定 environment。");
   assert.ok(workflow.includes(checkout), "必须固定 actions/checkout v6。");
   assert.ok(workflow.includes(setupNode), "必须固定 actions/setup-node v6。");
