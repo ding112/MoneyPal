@@ -30,6 +30,7 @@ async function writePackageFiles(name, target) {
   await Promise.all([
     writeFile(join(target, "package.json"), `${JSON.stringify({ ...manifest, version: workspacePackage.version }, null, 2)}\n`, "utf8"),
     copy(join(source, "README.md"), join(target, "README.md")),
+    copy(join(workspace, "LICENSE"), join(target, "LICENSE")),
   ]);
 }
 

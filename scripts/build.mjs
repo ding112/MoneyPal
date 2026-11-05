@@ -8,7 +8,7 @@ import { spawnSync } from "node:child_process";
 const workspace = fileURLToPath(new URL("..", import.meta.url));
 const stateFile = join(workspace, "dist", ".build-state.json");
 const inputPaths = [
-  "src", "test", "packages", "scripts", "package.json", "package-lock.json", "tsconfig.json",
+  "src", "test", "packages", "scripts", "LICENSE", "package.json", "package-lock.json", "tsconfig.json",
   "node_modules/typescript/package.json", "node_modules/@types/node/package.json",
 ];
 const inputs = await fingerprint(inputPaths);

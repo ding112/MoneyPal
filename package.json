@@ -43,5 +43,6 @@
       ]
     }
   },
-  "packageManager": "npm@11.14.1"
+  "packageManager": "npm@11.14.1",
+  "license": "Apache-2.0"
 }
