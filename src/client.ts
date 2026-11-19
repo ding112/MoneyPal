@@ -279,3 +279,178 @@ function compareAbsoluteDecimal(left: string, right: string): -1 | 0 | 1 {
   const aFraction = a.fraction.padEnd(width, "0"); const bFraction = b.fraction.padEnd(width, "0");
   return aFraction === bFraction ? 0 : aFraction < bFraction ? -1 : 1;
 }
+
+/* ═══ 独立账户页（ADR-0006）：候选加载、选择规则与余额请求隔离 ═══ */
+
+export type LedgerCandidateStatus = "candidate" | "uninitialized" | "invalid_layout" | "unavailable";
+export interface LedgerCandidate { workspaceId: string; title: string; status: LedgerCandidateStatus; directoryHint?: string; }
+
+/** 独立账户页的两条 RPC（宿主端见 src/host.ts 的 ledger-candidates / ledger-balances）。 */
+export interface LedgerRpc {
+  candidates(signal: AbortSignal): Promise<{ candidates: LedgerCandidate[] }>;
+  balances(workspaceId: string, asOf: string, signal: AbortSignal): Promise<BalanceSnapshot>;
+}
+
+export interface AccountsControllerState {
+  /** undefined = 尚未取得候选结果；[] = 已取得但零候选。 */
+  candidates?: LedgerCandidate[];
+  candidatesLoading: boolean;
+  /** 候选查询失败（可重试）；已有选择时仅记录，不阻断余额查询。 */
+  candidatesError?: string;
+  /** 当前选中的工作区 ID；undefined 表示等待用户选择（含零候选）。 */
+  selection?: string;
+  selectionTitle?: string;
+  /** 当前选择是否为自动选择：仅本次页面运行期有效，不持久化（持久化与请求身份绑定由后续票交付）。 */
+  autoSelected: boolean;
+  snapshot?: BalanceSnapshot;
+  refreshedAt?: number;
+  stale: boolean;
+  loading: boolean;
+  error?: string;
+}
+
+export interface AccountsControllerOptions { rpc: LedgerRpc; now?: () => Date; visible?: () => boolean; }
+
+/** 独立账户页控制器：候选加载、选择规则、余额请求隔离与刷新全部集中在此处；React 只订阅此状态。
+ * 30 秒轮询、面板激活与标签可见性的刷新机制由后续票在 activate/refresh 的调用点扩展。 */
+export class AccountsController {
+  #state: AccountsControllerState = { candidatesLoading: false, autoSelected: false, stale: false, loading: false };
+  #listeners = new Set<(state: AccountsControllerState) => void>();
+  #candidatesRequest: AbortController | undefined;
+  #balanceRequest: AbortController | undefined;
+  /** 同一时间至多一个有效余额请求；被替换、完成或清空时复位。 */
+  #balanceInFlight = false;
+  #disposed = false;
+  /** 选择被撤销（登记删除/重验失效）后置位：本运行期不再自动选择，等待用户手动选择。 */
+  #manualChoiceRequired = false;
+  #rpc: LedgerRpc; #now: () => Date; #visible: () => boolean;
+
+  constructor(options: AccountsControllerOptions) {
+    this.#rpc = options.rpc;
+    this.#now = options.now ?? (() => new Date());
+    this.#visible = options.visible ?? (() => document.visibilityState === "visible");
+  }
+
+  get state(): AccountsControllerState { return this.#state; }
+  subscribe(listener: (state: AccountsControllerState) => void): () => void { this.#listeners.add(listener); listener(this.#state); return () => { this.#listeners.delete(listener); }; }
+
+  /** 页面激活（首次挂载或返回面板）：重取候选并按规则校验选择，再刷新所选账本余额。
+   * 余额刷新为后台进行（void），页面挂载点无需等待；迟到的候选/余额结果按各自请求与当前选择丢弃。 */
+  async activate(): Promise<void> {
+    if (this.#disposed) return;
+    if (!this.#state.candidatesLoading) await this.loadCandidates();
+    this.#refreshAfterSelection();
+  }
+
+  async loadCandidates(): Promise<void> {
+    if (this.#disposed) return;
+    this.#abortCandidates();
+    const request = new AbortController(); this.#candidatesRequest = request;
+    this.#state = { ...this.#state, candidatesLoading: true }; this.emit();
+    try {
+      const { candidates } = await this.#rpc.candidates(request.signal);
+      if (!this.#currentCandidates(request)) return;
+      this.#applyCandidates(candidates);
+    } catch (error) {
+      if (!this.#currentCandidates(request)) return;
+      // 已有选择时候选失败不阻断余额查询（candidatesError 仅在无选择时呈现）；与零候选可区分。
+      this.#state = { ...this.#state, candidatesLoading: false, candidatesError: this.#state.selection ? this.#state.candidatesError : safeMessage(error) };
+      this.emit();
+    }
+  }
+
+  /** 手动选择：立即取消旧余额请求并清空其快照，仅接受候选结果中状态为 candidate 的 ID。 */
+  async select(workspaceId: string): Promise<void> {
+    if (this.#disposed) return;
+    const target = this.#state.candidates?.find((item) => item.workspaceId === workspaceId && item.status === "candidate");
+    if (!target || workspaceId === this.#state.selection) return;
+    this.#manualChoiceRequired = false;
+    this.#applySelection(target, false);
+    void this.refresh();
+  }
+
+  async refresh(): Promise<void> {
+    const selection = this.#state.selection;
+    if (!selection || this.#disposed || !this.#visible()) return;
+    // 同一时间只有一个有效余额请求：在途时忽略重复触发（手动刷新与轮询重叠亦然）。
+    if (this.#balanceInFlight) return;
+    this.#abortBalance();
+    const request = new AbortController(); this.#balanceRequest = request; this.#balanceInFlight = true;
+    this.#state = { ...this.#state, loading: true, error: undefined }; this.emit();
+    try {
+      const snapshot = await this.#rpc.balances(selection, localDate(this.#now()), request.signal);
+      if (!this.#currentBalance(selection, request)) return;
+      this.#balanceInFlight = false;
+      this.#state = { ...this.#state, snapshot, refreshedAt: this.#now().getTime(), stale: false, loading: false }; this.emit();
+    } catch (error) {
+      if (!this.#currentBalance(selection, request)) return;
+      if (error instanceof BalanceClientError && error.code === "workspace_not_registered") {
+        // 宿主确认登记已不存在：与访问拒绝一致——立即清空快照与选择，重取候选并等待用户重新选择。
+        this.#balanceInFlight = false;
+        this.#manualChoiceRequired = true;
+        this.#clearSelection();
+        void this.loadCandidates();
+        return;
+      }
+      // 同一账本的临时失败保留旧余额并标记待更新；无快照时呈现可重试错误。
+      this.#balanceInFlight = false;
+      this.#state = { ...this.#state, loading: false, stale: Boolean(this.#state.snapshot), error: safeMessage(error) }; this.emit();
+    }
+  }
+
+  /** 手动重试入口：候选失败（或尚未取得）时重取候选；已有选择时重试余额请求。 */
+  async retry(): Promise<void> {
+    if (this.#disposed) return;
+    if (!this.#state.selection) {
+      if (!this.#state.candidatesError && this.#state.candidates !== undefined) return;
+      await this.loadCandidates();
+    }
+    this.#refreshAfterSelection();
+  }
+
+  dispose(): void { this.#disposed = true; this.#abortCandidates(); this.#abortBalance(); this.#listeners.clear(); }
+
+  /** 选择存在时的统一刷新入口：旧快照先标记待更新，再发起（或在途时合并）余额请求。 */
+  #refreshAfterSelection(): void {
+    if (!this.#state.selection || this.#disposed) return;
+    if (this.#state.snapshot && !this.#state.stale) { this.#state = { ...this.#state, stale: true }; this.emit(); }
+    void this.refresh();
+  }
+
+  #applyCandidates(candidates: LedgerCandidate[]): void {
+    const selected = this.#state.selection;
+    const stillValid = selected !== undefined && candidates.some((item) => item.workspaceId === selected && item.status === "candidate");
+    if (selected !== undefined && !stillValid) {
+      // 所选登记已删除或不再可查：立即清空快照与选择；其余候选即使只剩一个也等待用户重新选择。
+      this.#manualChoiceRequired = true;
+      this.#state = { ...this.#state, candidates, candidatesLoading: false, candidatesError: undefined };
+      this.#clearSelection();
+      return;
+    }
+    this.#state = { ...this.#state, candidates, candidatesLoading: false, candidatesError: undefined };
+    if (selected === undefined && !this.#manualChoiceRequired) {
+      const sole = candidates.filter((item) => item.status === "candidate");
+      if (sole.length === 1) this.#applySelection(sole[0]!, true);
+    }
+    this.emit();
+  }
+
+  #applySelection(candidate: LedgerCandidate, auto: boolean): void {
+    // 切换选择即取消旧余额请求并清空其快照：迟到的旧结果因请求失效而丢弃。
+    this.#abortBalance();
+    this.#state = { ...this.#state, selection: candidate.workspaceId, selectionTitle: candidate.title, autoSelected: auto, snapshot: undefined, refreshedAt: undefined, stale: false, loading: true, error: undefined };
+    this.emit();
+  }
+
+  #clearSelection(): void {
+    this.#abortBalance();
+    this.#state = { ...this.#state, selection: undefined, selectionTitle: undefined, autoSelected: false, snapshot: undefined, refreshedAt: undefined, stale: false, loading: false, error: undefined };
+    this.emit();
+  }
+
+  #currentCandidates(request: AbortController): boolean { return !this.#disposed && this.#candidatesRequest === request && !request.signal.aborted; }
+  #currentBalance(selection: string, request: AbortController): boolean { return !this.#disposed && this.#state.selection === selection && this.#balanceRequest === request && !request.signal.aborted; }
+  #abortCandidates(): void { this.#candidatesRequest?.abort(); this.#candidatesRequest = undefined; }
+  #abortBalance(): void { this.#balanceRequest?.abort(); this.#balanceRequest = undefined; this.#balanceInFlight = false; }
+  private emit(): void { for (const listener of this.#listeners) listener(this.#state); }
+}
