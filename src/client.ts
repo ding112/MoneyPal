@@ -20,6 +20,14 @@ export class BalanceClientError extends Error {
   constructor(public readonly code: string, message: string) { super(message); this.name = "BalanceClientError"; }
 }
 
+/** DSH rpc-host 对非 owner 请求的 owner 专用精确 /api 路由以 HTTP 403 短路拒绝（不带 RPC 信封；0.2.1-rc.2 已核对），
+ * connection.rpc.call 将其抛出为携带状态码的传输错误。按错误消息中的状态码识别宿主的显式拒绝访问，
+ * bundle 据此映射为 workspace_access_denied：控制器与 workspace_not_registered 同等清空余额。
+ * 其余传输失败（含 401 未认证与 5xx 宿主故障）不视为拒绝，仍走通用可重试路径，不等同于登记移除。 */
+export function rpcAccessDenied(error: unknown): boolean {
+  return error instanceof Error && /HTTP 403\b/u.test(error.message);
+}
+
 const OPEN_KEY = "dsh-moneypal.balance-open";
 // 会话 preset 的匹配 ID：大小写精确匹配，不匹配展示名称或字符串片段。
 const MONEYPAL_PRESET = "dsh-moneypal";
@@ -312,6 +320,9 @@ export interface AccountsControllerState {
 export interface AccountsControllerOptions { rpc: LedgerRpc; now?: () => Date; visible?: () => boolean; storage?: Pick<Storage, "getItem" | "setItem">; }
 
 const WORKSPACE_KEY = "dsh-moneypal.accounts-workspace";
+/** 宿主确认登记已删除或明确拒绝访问的错误码：与撤销登记同等处理——立即清空快照与选择并等待用户重新选择
+ * （spec「首次选择与异常状态」5）。其余错误（连接、候选整体失败、目录离线、布局与运行时）一律保留选择。 */
+const REVOKE_CODES: ReadonlySet<string> = new Set(["workspace_not_registered", "workspace_access_denied"]);
 
 /** 独立账户页控制器：候选加载、选择规则、余额请求隔离与刷新全部集中在此处；React 只订阅此状态。
  * 30 秒轮询、面板激活与标签可见性的刷新机制由后续票在 activate/refresh 的调用点扩展。 */
@@ -389,8 +400,8 @@ export class AccountsController {
       this.#state = { ...this.#state, snapshot, refreshedAt: this.#now().getTime(), stale: false, loading: false }; this.emit();
     } catch (error) {
       if (!this.#currentBalance(selection, request)) return;
-      if (error instanceof BalanceClientError && error.code === "workspace_not_registered") {
-        // 宿主确认登记已不存在：与访问拒绝一致——立即清空快照与选择，重取候选并等待用户重新选择。
+      if (error instanceof BalanceClientError && REVOKE_CODES.has(error.code)) {
+        // 宿主确认登记已删除或明确拒绝访问：立即清空快照与选择，重取候选并等待用户重新选择。
         this.#balanceInFlight = false;
         this.#manualChoiceRequired = true;
         this.#clearSelection();
@@ -422,9 +433,11 @@ export class AccountsController {
 
   #applyCandidates(candidates: LedgerCandidate[]): void {
     const selected = this.#state.selection;
-    const stillValid = selected !== undefined && candidates.some((item) => item.workspaceId === selected && item.status === "candidate");
-    if (selected !== undefined && !stillValid) {
-      // 所选登记已删除或不再可查：立即清空快照与选择；其余候选即使只剩一个也等待用户重新选择。
+    // 只有登记消失（不再出现在候选列表）才视为撤销：立即清空快照与选择，其余候选即使只剩一个也等待用户重新选择。
+    // 仍在列表但预检降级（unavailable/invalid_layout/uninitialized）说明登记仍有效：保持选择，
+    // 由余额查询呈现具体的可重试结果（spec「首次选择与异常状态」4/6），不自动改选其他候选。
+    const stillListed = selected !== undefined && candidates.some((item) => item.workspaceId === selected);
+    if (selected !== undefined && !stillListed) {
       this.#manualChoiceRequired = true;
       this.#state = { ...this.#state, candidates, candidatesLoading: false, candidatesError: undefined };
       this.#clearSelection();
