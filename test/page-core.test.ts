@@ -3,7 +3,7 @@ import { test } from "node:test";
 
 import type { BalanceSnapshot } from "../src/balance.js";
 
-import { AccountsController, BalanceClientError, pageBodyView, type AccountsControllerState, type LedgerCandidate } from "../src/client.js";
+import { AccountsController, BalanceClientError, pageBodyView, rpcAccessDenied, type AccountsControllerState, type LedgerCandidate } from "../src/client.js";
 
 const flush = () => new Promise<void>((resolve) => setImmediate(resolve));
 
@@ -224,6 +224,11 @@ test("无法恢复上次手动选择时等待用户重新选择，其余候选�
     await flush();
     assert.equal(reloaded.state().selection, undefined, "无法恢复时等待用户重新选择");
     assert.equal(reloaded.balanceCalls(), 0, "未重新选择前不得查询余额");
+    // 恢复失败与撤销清空行为一致：再次激活（含重验）仍等待用户，不得自动选中唯一候选。
+    await reloaded.controller.activate();
+    await flush();
+    assert.equal(reloaded.state().selection, undefined, "恢复失败后的再次激活仍等待用户重新选择");
+    assert.equal(reloaded.balanceCalls(), 0);
     await reloaded.controller.select("keep");
     reloaded.pending("keep").release(snapshotFor("Assets:K-现金"));
     await flush();
@@ -413,6 +418,40 @@ test("临时失败保留同一账本的旧余额并标记过期，重试成功�
   } finally { harness.controller.dispose(); }
 });
 
+test("目录暂时离线（workspace_unavailable）保持选择并标记过期，恢复后重试只更新当前账本", async () => {
+  const queried: string[] = [];
+  let fail = false;
+  const harness = makeController({
+    balances: async (workspaceId) => {
+      queried.push(workspaceId);
+      if (fail) throw new BalanceClientError("workspace_unavailable", "账本工作区暂时无法访问，请稍后重试。");
+      return snapshotFor("Assets:C-现金");
+    },
+  });
+  try {
+    await harness.controller.activate();
+    await flush();
+    assert.ok(harness.state().snapshot);
+    assert.notEqual(harness.state().refreshedAt, undefined);
+    fail = true;
+    await harness.controller.refresh();
+    assert.equal(harness.state().selection, "w1", "已登记账本暂时无法读取时保持选择");
+    assert.equal(harness.state().selectionTitle, "w1", "页面上账本名保持可见（默认夹具以工作区 ID 为显示名）");
+    assert.equal(harness.state().snapshot?.assets.accounts[0]?.account, "Assets:C-现金", "同一账本的成功快照保留");
+    assert.equal(harness.state().stale, true, "标为过期");
+    assert.notEqual(harness.state().refreshedAt, undefined, "上次成功刷新时间保留");
+    assert.equal(harness.state().error, "账本工作区暂时无法访问，请稍后重试。");
+    assert.equal(harness.state().loading, false);
+    fail = false;
+    await harness.controller.refresh();
+    assert.equal(harness.state().stale, false, "重试成功后清除过期状态");
+    assert.equal(harness.state().error, undefined);
+    assert.ok(harness.state().snapshot);
+    assert.notEqual(harness.state().refreshedAt, undefined, "成功刷新时间更新");
+    assert.ok(queried.length >= 2 && queried.every((id) => id === "w1"), "只更新当前所选账本的余额");
+  } finally { harness.controller.dispose(); }
+});
+
 test("完整布局校验失败保留可重试的布局错误，不清空选择", async () => {
   let fail = true;
   const harness = makeController({
@@ -458,29 +497,92 @@ test("宿主确认登记已删除时清空快照并等待用户重新选择", as
   } finally { harness.controller.dispose(); }
 });
 
-test("候选重验发现所选工作区不再可查时清空并等待用户", async () => {
+test("宿主明确拒绝访问时与登记删除同样清空并等待用户重新选择", async () => {
   let candidateRounds = 0;
+  let balanceCalls = 0;
+  const harness = makeController({
+    candidates: async () => { candidateRounds += 1; return { candidates: [candidate(candidateRounds === 1 ? "w1" : "w2")] }; },
+    balances: async () => { balanceCalls += 1; if (balanceCalls === 1) throw new BalanceClientError("workspace_access_denied", "宿主拒绝了本次访问，请稍后重试。"); return snapshotFor("Assets:C-现金"); },
+  });
+  try {
+    await harness.controller.activate();
+    await flush(); await flush();
+    assert.equal(harness.state().selection, undefined, "访问被拒绝后应清空选择");
+    assert.equal(harness.state().snapshot, undefined, "访问被拒绝后应清空旧余额");
+    assert.equal(harness.state().error, undefined, "撤销错误不作为页面主状态呈现");
+    assert.equal(harness.state().candidates?.[0]?.workspaceId, "w2", "应重取候选并显示选择器");
+    assert.equal(balanceCalls, 1);
+    await harness.controller.activate();
+    assert.equal(balanceCalls, 1, "其余候选即使只剩一个也等待用户重新选择");
+    await harness.controller.select("w2");
+    await flush();
+    assert.equal(harness.state().selection, "w2", "用户手动选择后恢复查询");
+    assert.ok(harness.state().snapshot);
+  } finally { harness.controller.dispose(); }
+});
+
+test("候选重验发现所选账本预检降级时保持选择，可手动切换到其他候选", async () => {
+  let candidateRounds = 0;
+  const queried: string[] = [];
   const harness = makeController({
     candidates: async () => {
       candidateRounds += 1;
-      return { candidates: candidateRounds === 1 ? [candidate("w1")] : [candidate("w1", "invalid_layout"), candidate("w2")] };
+      return { candidates: candidateRounds === 1
+        ? [candidate("w1", "candidate", "家庭账本")]
+        : [candidate("w1", "unavailable", "家庭账本"), candidate("w2", "candidate", "副业账本")] };
     },
-    balances: async () => snapshotFor("Assets:C-现金"),
+    balances: async (workspaceId) => { queried.push(workspaceId); return snapshotFor("Assets:C-现金"); },
   });
   try {
     await harness.controller.activate();
     await flush();
     assert.equal(harness.state().selection, "w1");
     assert.ok(harness.state().snapshot);
+    // 目录暂时离线后回到页面：预检降级为 unavailable，但登记仍在，选择保持
     await harness.controller.activate();
     await flush();
-    assert.equal(harness.state().selection, undefined, "所选工作区不再是候选时应清空选择");
-    assert.equal(harness.state().snapshot, undefined, "清空选择时应清空快照");
-    assert.equal(harness.balanceCalls(), 1, "等待用户选择期间不得自动选择新账本");
+    assert.equal(harness.state().selection, "w1", "登记仍在（预检降级）时不得清空选择");
+    assert.equal(harness.state().selectionTitle, "家庭账本", "页面上账本名保持可见");
+    assert.ok(harness.state().snapshot, "旧快照保留");
+    assert.deepEqual(queried, ["w1", "w1"], "仍按原选择刷新余额，不自动改选其他候选");
     await harness.controller.select("w2");
     await flush();
-    assert.equal(harness.state().selection, "w2");
-    assert.ok(harness.state().snapshot);
+    assert.equal(harness.state().selection, "w2", "该状态可手动切换");
+    assert.equal(harness.state().selectionTitle, "副业账本");
+    assert.deepEqual(queried, ["w1", "w1", "w2"]);
+  } finally { harness.controller.dispose(); }
+});
+
+test("登记在重验时消失即撤销：清空快照、在途迟到成功不复活、等待手动选择", async () => {
+  let candidateRounds = 0;
+  const harness = makeController({
+    candidates: async () => {
+      candidateRounds += 1;
+      return { candidates: candidateRounds === 1 ? [candidate("w1", "candidate", "家庭账本")] : [candidate("w2", "candidate", "副业账本")] };
+    },
+  });
+  try {
+    await harness.controller.activate();
+    const inFlight = harness.pending("w1");
+    assert.equal(harness.state().selection, "w1");
+    assert.equal(harness.balanceCalls(), 1);
+    // 重验发现 w1 已不在登记中：立即清空快照与选择
+    await harness.controller.activate();
+    await flush();
+    assert.equal(harness.state().selection, undefined, "登记消失后清空选择");
+    assert.equal(harness.state().snapshot, undefined, "登记消失后清空快照");
+    assert.deepEqual(harness.state().candidates?.map((item) => item.workspaceId), ["w2"]);
+    assert.equal(harness.balanceCalls(), 1, "其余候选即使只剩一个也等待用户重新选择");
+    // 登记移除之前发出的余额请求此刻才成功返回：不得复活已撤下的数据
+    inFlight.release(snapshotFor("Assets:C-撤销前"));
+    await flush();
+    assert.equal(harness.state().snapshot, undefined, "迟到成功响应不得重新显示已撤下的数据");
+    assert.equal(harness.state().selection, undefined);
+    await harness.controller.select("w2");
+    harness.pending("w2").release(snapshotFor("Assets:副业-现金"));
+    await flush();
+    assert.equal(harness.state().selection, "w2", "用户手动选择后恢复查询");
+    assert.equal(harness.state().snapshot?.assets.accounts[0]?.account, "Assets:副业-现金");
   } finally { harness.controller.dispose(); }
 });
 
@@ -737,4 +839,15 @@ test("正文判定顺序固定：选择内加载与失败优先，候选加载�
   assert.deepEqual(pageBodyView(pageState({ candidatesLoading: true })), { kind: "loading" });
   assert.deepEqual(pageBodyView(pageState({ candidatesError: "暂时无法获取工作区列表，请稍后重试。" })), { kind: "retryable", message: "暂时无法获取工作区列表，请稍后重试。" });
   assert.deepEqual(pageBodyView(pageState({ selection: "w1", error: "连接不可用", candidatesError: "暂时无法获取工作区列表，请稍后重试。" })), { kind: "retryable", message: "连接不可用" }, "选择内的失败先于候选失败呈现");
+});
+
+test("传输层错误按宿主拒绝状态码识别为访问拒绝，其余传输失败不视为拒绝", () => {
+  // DSH rpc-host 对非 owner 请求的 owner 专用精确路由以 HTTP 403 短路拒绝（不带 RPC 信封）；
+  // connection.rpc.call 抛出携带状态码的传输错误，只有 403 是宿主的显式拒绝访问。
+  assert.equal(rpcAccessDenied(new Error("transport failure for /api/dsh-moneypal/ledger-balances: HTTP 403")), true);
+  assert.equal(rpcAccessDenied(new Error("transport failure for /api/dsh-moneypal/ledger-candidates: HTTP 403")), true);
+  assert.equal(rpcAccessDenied(new Error("transport failure for /api/dsh-moneypal/ledger-balances: HTTP 401")), false, "未认证是可恢复状态，不等同于明确拒绝");
+  assert.equal(rpcAccessDenied(new Error("transport failure for /api/dsh-moneypal/ledger-balances: HTTP 500")), false, "宿主故障走可重试路径，不清空余额");
+  assert.equal(rpcAccessDenied(new Error("connection: invalid server-response envelope")), false);
+  assert.equal(rpcAccessDenied(undefined), false, "非 Error 值不视为拒绝");
 });
