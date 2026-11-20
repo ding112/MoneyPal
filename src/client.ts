@@ -300,7 +300,7 @@ export interface AccountsControllerState {
   /** 当前选中的工作区 ID；undefined 表示等待用户选择（含零候选）。 */
   selection?: string;
   selectionTitle?: string;
-  /** 当前选择是否为自动选择：仅本次页面运行期有效，不持久化（持久化与请求身份绑定由后续票交付）。 */
+  /** 当前选择是否为自动选择：仅本次页面运行期有效，不持久化；手动选择（含重载恢复）为 false。 */
   autoSelected: boolean;
   snapshot?: BalanceSnapshot;
   refreshedAt?: number;
@@ -309,7 +309,9 @@ export interface AccountsControllerState {
   error?: string;
 }
 
-export interface AccountsControllerOptions { rpc: LedgerRpc; now?: () => Date; visible?: () => boolean; }
+export interface AccountsControllerOptions { rpc: LedgerRpc; now?: () => Date; visible?: () => boolean; storage?: Pick<Storage, "getItem" | "setItem">; }
+
+const WORKSPACE_KEY = "dsh-moneypal.accounts-workspace";
 
 /** 独立账户页控制器：候选加载、选择规则、余额请求隔离与刷新全部集中在此处；React 只订阅此状态。
  * 30 秒轮询、面板激活与标签可见性的刷新机制由后续票在 activate/refresh 的调用点扩展。 */
@@ -323,12 +325,13 @@ export class AccountsController {
   #disposed = false;
   /** 选择被撤销（登记删除/重验失效）后置位：本运行期不再自动选择，等待用户手动选择。 */
   #manualChoiceRequired = false;
-  #rpc: LedgerRpc; #now: () => Date; #visible: () => boolean;
+  #rpc: LedgerRpc; #now: () => Date; #visible: () => boolean; #storage?: Pick<Storage, "getItem" | "setItem">;
 
   constructor(options: AccountsControllerOptions) {
     this.#rpc = options.rpc;
     this.#now = options.now ?? (() => new Date());
     this.#visible = options.visible ?? (() => document.visibilityState === "visible");
+    this.#storage = options.storage;
   }
 
   get state(): AccountsControllerState { return this.#state; }
@@ -359,13 +362,15 @@ export class AccountsController {
     }
   }
 
-  /** 手动选择：立即取消旧余额请求并清空其快照，仅接受候选结果中状态为 candidate 的 ID。 */
+  /** 手动选择：立即取消旧余额请求并清空其快照，仅接受候选结果中状态为 candidate 的 ID；
+   * 并把该工作区 ID 写入存储供下次访问恢复（写失败降级为仅本次运行期有效）。 */
   async select(workspaceId: string): Promise<void> {
     if (this.#disposed) return;
     const target = this.#state.candidates?.find((item) => item.workspaceId === workspaceId && item.status === "candidate");
     if (!target || workspaceId === this.#state.selection) return;
     this.#manualChoiceRequired = false;
     this.#applySelection(target, false);
+    this.#writeStoredWorkspace(workspaceId);
     void this.refresh();
   }
 
@@ -429,8 +434,16 @@ export class AccountsController {
     }
     this.#state = { ...this.#state, candidates, candidatesLoading: false, candidatesError: undefined };
     if (selected === undefined && !this.#manualChoiceRequired) {
-      const sole = candidates.filter((item) => item.status === "candidate");
-      if (sole.length === 1) this.#applySelection(sole[0]!, true);
+      // 候选查询完成后优先恢复仍可用的手动选择；自动选择只在没有可恢复选择时兜底，且仅本次运行期有效。
+      const remembered = this.#readStoredWorkspace();
+      if (remembered !== undefined) {
+        const restored = candidates.find((item) => item.workspaceId === remembered && item.status === "candidate");
+        if (restored) { this.#applySelection(restored, false); return; }
+        this.#manualChoiceRequired = true;
+      } else {
+        const sole = candidates.filter((item) => item.status === "candidate");
+        if (sole.length === 1) this.#applySelection(sole[0]!, true);
+      }
     }
     this.emit();
   }
@@ -452,5 +465,8 @@ export class AccountsController {
   #currentBalance(selection: string, request: AbortController): boolean { return !this.#disposed && this.#state.selection === selection && this.#balanceRequest === request && !request.signal.aborted; }
   #abortCandidates(): void { this.#candidatesRequest?.abort(); this.#candidatesRequest = undefined; }
   #abortBalance(): void { this.#balanceRequest?.abort(); this.#balanceRequest = undefined; this.#balanceInFlight = false; }
+  /** 存储读写失败一律降级为仅当前页面运行期有效：不得阻断选择与查询（spec 用户故事 9）。 */
+  #writeStoredWorkspace(workspaceId: string): void { try { this.#storage?.setItem(WORKSPACE_KEY, workspaceId); } catch { /* 写失败时手动选择仅本次运行期有效 */ } }
+  #readStoredWorkspace(): string | undefined { try { return this.#storage?.getItem(WORKSPACE_KEY) || undefined; } catch { return undefined; } }
   private emit(): void { for (const listener of this.#listeners) listener(this.#state); }
 }

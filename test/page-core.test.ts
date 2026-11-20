@@ -15,6 +15,16 @@ const snapshotFor = (account: string): BalanceSnapshot => ({ asOf: "2026-08-27",
 /** 可控时钟：固定为本地时区日期，验证余额请求携带浏览器当地日期。 */
 const fixedNow = () => new Date(2026, 7, 27, 10, 0, 0);
 
+/** 可控存储夹具：Map 后备，暴露 data 供断言「浏览器只保存手动选择的工作区 ID」。 */
+function memoryStorage(initial: Record<string, string> = {}) {
+  const data = new Map(Object.entries(initial));
+  return {
+    data,
+    getItem: (key: string) => data.get(key) ?? null,
+    setItem: (key: string, value: string) => { data.set(key, value); },
+  };
+}
+
 interface Harness {
   controller: AccountsController;
   state: () => AccountsControllerState;
@@ -27,6 +37,7 @@ interface Harness {
 function makeController(options: {
   candidates?: Array<LedgerCandidate> | (() => Promise<{ candidates: LedgerCandidate[] }>);
   balances?: (workspaceId: string, asOf: string, signal: AbortSignal) => Promise<BalanceSnapshot>;
+  storage?: Pick<Storage, "getItem" | "setItem">;
 } = {}): Harness {
   let balanceCalls = 0;
   let candidateCalls = 0;
@@ -44,7 +55,7 @@ function makeController(options: {
       return new Promise<BalanceSnapshot>((resolve, reject) => { pendingRequests.set(workspaceId, { release: resolve, reject, signal }); });
     },
   };
-  const controller = new AccountsController({ rpc, now: fixedNow, visible: () => true });
+  const controller = new AccountsController({ rpc, now: fixedNow, visible: () => true, storage: options.storage });
   return { controller, state: () => controller.state, balanceCalls: () => balanceCalls, candidateCalls: () => candidateCalls, pending: (workspaceId) => pendingRequests.get(workspaceId)! };
 }
 
@@ -110,6 +121,112 @@ test("多候选等待用户选择，手动选择立即切换且迟到结果按�
     assert.equal(harness.state().snapshot?.assets.accounts[0]?.account, "Assets:C-第三次A", "页面只显示本次选择的结果");
     await Promise.all([firstSelection, secondSelection, thirdSelection]);
   } finally { harness.controller.dispose(); }
+});
+
+test("手动选择记住工作区 ID，自动选择不写入存储", async () => {
+  const storage = memoryStorage();
+  const auto = makeController({ candidates: [candidate("w1")], storage });
+  try {
+    await auto.controller.activate();
+    await flush();
+    assert.equal(auto.state().selection, "w1");
+    assert.equal(auto.state().autoSelected, true);
+    assert.equal(storage.data.size, 0, "自动选择只用于本次页面运行，不得写入存储");
+  } finally { auto.controller.dispose(); }
+  const manual = makeController({ candidates: [candidate("a"), candidate("b")], storage });
+  try {
+    await manual.controller.activate();
+    await manual.controller.select("b");
+    assert.equal(manual.state().selection, "b");
+    assert.deepEqual([...storage.data.values()], ["b"], "手动选择应持久化工作区 ID，且不保存候选名之外的信息");
+    await manual.controller.select("a");
+    assert.deepEqual([...storage.data.values()], ["a"], "再次手动选择应覆盖上次记忆");
+  } finally { manual.controller.dispose(); }
+});
+
+test("重载后恢复仍可用的手动选择并按其查询余额", async () => {
+  const storage = memoryStorage();
+  const first = makeController({ candidates: [candidate("a", "candidate", "家庭账本"), candidate("b", "candidate", "副业账本")], storage });
+  try {
+    await first.controller.activate();
+    await first.controller.select("b");
+    const firstB = first.pending("b");
+    firstB.release(snapshotFor("Assets:副业-现金"));
+    await flush();
+  } finally { first.controller.dispose(); }
+  // 模拟浏览器重载：全新控制器实例读取同一份存储。
+  const second = makeController({ candidates: [candidate("a", "candidate", "家庭账本"), candidate("b", "candidate", "副业账本")], storage });
+  try {
+    await second.controller.activate();
+    await flush();
+    assert.equal(second.state().selection, "b", "重载后应恢复上次手动选择");
+    assert.equal(second.state().selectionTitle, "副业账本");
+    assert.equal(second.state().autoSelected, false, "恢复的手动选择不等同于自动选择");
+    const request = second.pending("b");
+    assert.equal(request.signal.aborted, false, "恢复后应立即按恢复的选择查询余额");
+    request.release(snapshotFor("Assets:副业-现金"));
+    await flush();
+    assert.equal(second.state().snapshot?.assets.accounts[0]?.account, "Assets:副业-现金");
+  } finally { second.controller.dispose(); }
+});
+
+test("无法恢复上次手动选择时等待用户重新选择，其余候选不自动选", async () => {
+  const storage = memoryStorage();
+  const first = makeController({ candidates: [candidate("gone"), candidate("keep")], storage });
+  try {
+    await first.controller.activate();
+    await first.controller.select("gone");
+  } finally { first.controller.dispose(); }
+  // 重载后该工作区已不在候选中：即使只剩唯一其他候选也不自动选。
+  const reloaded = makeController({ candidates: [candidate("keep")], storage });
+  try {
+    await reloaded.controller.activate();
+    await flush();
+    assert.equal(reloaded.state().selection, undefined, "无法恢复时等待用户重新选择");
+    assert.equal(reloaded.balanceCalls(), 0, "未重新选择前不得查询余额");
+    await reloaded.controller.select("keep");
+    reloaded.pending("keep").release(snapshotFor("Assets:K-现金"));
+    await flush();
+    assert.equal(reloaded.state().selection, "keep", "用户重新选择后恢复查询");
+    assert.ok(reloaded.state().snapshot);
+  } finally { reloaded.controller.dispose(); }
+  // 候选仍在但暂时不可访问：同样不可恢复，等待用户。
+  const second = makeController({ candidates: [candidate("gone"), candidate("keep")], storage });
+  try {
+    await second.controller.activate();
+    await second.controller.select("gone");
+  } finally { second.controller.dispose(); }
+  const third = makeController({ candidates: [candidate("gone", "unavailable"), candidate("keep")], storage });
+  try {
+    await third.controller.activate();
+    await flush();
+    assert.equal(third.state().selection, undefined, "候选仍在但不可用时不得恢复");
+    assert.equal(third.balanceCalls(), 0);
+    assert.deepEqual(third.state().candidates?.map((item) => item.workspaceId), ["gone", "keep"], "不可用候选仍呈现给用户");
+  } finally { third.controller.dispose(); }
+});
+
+test("存储读写失败时当次会话仍可选择和查询", async () => {
+  const broken = { getItem: () => { throw new Error("denied"); }, setItem: () => { throw new Error("denied"); } };
+  const auto = makeController({ candidates: [candidate("w1")], storage: broken });
+  try {
+    await auto.controller.activate();
+    await flush();
+    assert.equal(auto.state().selection, "w1", "读存储失败不影响候选规则与自动选择");
+    auto.pending("w1").release(snapshotFor("Assets:C-现金"));
+    await flush();
+    assert.ok(auto.state().snapshot, "读存储失败不影响余额查询");
+  } finally { auto.controller.dispose(); }
+  const manual = makeController({ candidates: [candidate("a"), candidate("b")], storage: broken });
+  try {
+    await manual.controller.activate();
+    await manual.controller.select("b");
+    assert.equal(manual.state().selection, "b", "写存储失败不影响手动切换");
+    manual.pending("b").release(snapshotFor("Assets:副业-现金"));
+    await flush();
+    assert.ok(manual.state().snapshot);
+    assert.equal(manual.state().error, undefined);
+  } finally { manual.controller.dispose(); }
 });
 
 test("零候选不发起余额查询，与查询失败可区分", async () => {

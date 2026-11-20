@@ -10,7 +10,7 @@ import { FinanceError } from "../src/finance/errors.js";
 let root: string; let runtime: string; let originalPython: string | undefined;
 before(async () => { root = await mkdtemp(join(tmpdir(), "dsh-moneypal-balance-")); runtime = join(root, "runtime.sh"); await writeFile(runtime, `#!/bin/sh
 request=$(cat)
-case "$request" in *'broken-layout'*) printf '%s' '{"protocolVersion":1,"runtime":{"python":"3.11.11","beancount":"3.2.3","beanquery":"0.2.0"},"ok":false,"error":{"code":"invalid_ledger_layout"}}' ;; *'"operation":"balance"'*) printf '%s' '{"protocolVersion":1,"runtime":{"python":"3.11.11","beancount":"3.2.3","beanquery":"0.2.0"},"ok":true,"result":{"range":{"begin":null,"end":"2026-08-28"},"accounts":[{"account":"Assets:C-现金","amounts":[{"commodity":"CNY","quantity":"1234.500"},{"commodity":"USD","quantity":"0.3"}]},{"account":"Liabilities:C-信用卡","amounts":[{"commodity":"CNY","quantity":"-12.34"}]}],"totals":[]}}' ;; *) printf '%s' '{"protocolVersion":1,"runtime":{"python":"3.11.11","beancount":"3.2.3","beanquery":"0.2.0"},"ok":true,"result":{"valid":true}}' ;; esac
+case "$request" in *'broken-layout'*) printf '%s' '{"protocolVersion":1,"runtime":{"python":"3.11.11","beancount":"3.2.3","beanquery":"0.2.0"},"ok":false,"error":{"code":"invalid_ledger_layout"}}' ;; *'"operation":"balance"'*'isolate-family'*) printf '%s' '{"protocolVersion":1,"runtime":{"python":"3.11.11","beancount":"3.2.3","beanquery":"0.2.0"},"ok":true,"result":{"range":{"begin":null,"end":"2026-08-28"},"accounts":[{"account":"Assets:Family-现金","amounts":[{"commodity":"CNY","quantity":"111.00"}]}],"totals":[]}}' ;; *'"operation":"balance"'*'isolate-side'*) printf '%s' '{"protocolVersion":1,"runtime":{"python":"3.11.11","beancount":"3.2.3","beanquery":"0.2.0"},"ok":true,"result":{"range":{"begin":null,"end":"2026-08-28"},"accounts":[{"account":"Assets:Side-现金","amounts":[{"commodity":"CNY","quantity":"222.00"}]}],"totals":[]}}' ;; *'"operation":"balance"'*) printf '%s' '{"protocolVersion":1,"runtime":{"python":"3.11.11","beancount":"3.2.3","beanquery":"0.2.0"},"ok":true,"result":{"range":{"begin":null,"end":"2026-08-28"},"accounts":[{"account":"Assets:C-现金","amounts":[{"commodity":"CNY","quantity":"1234.500"},{"commodity":"USD","quantity":"0.3"}]},{"account":"Liabilities:C-信用卡","amounts":[{"commodity":"CNY","quantity":"-12.34"}]}],"totals":[]}}' ;; *) printf '%s' '{"protocolVersion":1,"runtime":{"python":"3.11.11","beancount":"3.2.3","beanquery":"0.2.0"},"ok":true,"result":{"valid":true}}' ;; esac
 `, { mode: 0o700 }); await chmod(runtime, 0o700); originalPython = process.env.MONEYPAL_PYTHON; process.env.MONEYPAL_PYTHON = runtime; });
 after(async () => { if (originalPython === undefined) delete process.env.MONEYPAL_PYTHON; else process.env.MONEYPAL_PYTHON = originalPython; await rm(root, { recursive: true, force: true }); });
 
@@ -202,6 +202,22 @@ test("余额查询按 ID 重新解析登记并交给现有引擎", async () => {
     const invalid = await service.call("ledger-balances", payload) as { value: { ok: false; error: { code: string } } };
     assert.equal(invalid.value.error.code, "malformed_request", JSON.stringify(payload));
   }
+});
+
+test("同名候选各自按工作区 ID 查询，两个账本的余额彼此隔离", async () => {
+  const family = await workspace("isolate-family");
+  const side = await workspace("isolate-side");
+  const service = rpc(new Map(), { workspaceRegistry: registry([entity("family", family, "账本"), entity("side", side, "账本")]) });
+  const candidates = await service.call("ledger-candidates", {}) as { ok: true; value: { ok: true; value: { candidates: Array<{ workspaceId: string; title: string; status: string; directoryHint?: string }> } } };
+  assert.deepEqual(candidates.value.value.candidates, [
+    { workspaceId: "family", title: "账本", status: "candidate", directoryHint: "isolate-family" },
+    { workspaceId: "side", title: "账本", status: "candidate", directoryHint: "isolate-side" },
+  ]);
+  const familyBalances = await service.call("ledger-balances", { workspaceId: "family", asOf: "2026-08-27" }) as { ok: true; value: { ok: true; value: { assets: { accounts: Array<{ account: string; amounts: Array<{ quantity: string }> }> } } } };
+  assert.deepEqual(familyBalances.value.value.assets.accounts.map((account) => account.account), ["Assets:Family-现金"], "family ID 只返回家庭账本的余额");
+  assert.deepEqual(familyBalances.value.value.assets.accounts[0]?.amounts, [{ commodity: "CNY", quantity: "111.00" }]);
+  const sideBalances = await service.call("ledger-balances", { workspaceId: "side", asOf: "2026-08-27" }) as { ok: true; value: { ok: true; value: { assets: { accounts: Array<{ account: string }> } } } };
+  assert.deepEqual(sideBalances.value.value.assets.accounts.map((account) => account.account), ["Assets:Side-现金"], "side ID 只返回副业账本的余额");
 });
 
 test("登记缺失或目录离线时余额查询返回专用错误码", async () => {

@@ -282,6 +282,8 @@ window.__ModuleLoader__.load({ id: "dsh-moneypal", factory: (require) => {
         candidates: async (signal) => { const outer = await ctx.connection.rpc.call("/api", "dsh-moneypal/ledger-candidates", {}, signal); if (!outer?.ok) throw callError(); const inner = outer.value; if (!inner?.ok) throw callError(inner?.error); return inner.value; },
         balances: async (workspaceId, asOf, signal) => { const outer = await ctx.connection.rpc.call("/api", "dsh-moneypal/ledger-balances", { workspaceId, asOf }, signal); if (!outer?.ok) throw callError(); const inner = outer.value; if (!inner?.ok) throw callError(inner?.error); return inner.value; },
       },
+      // 手动选择的工作区 ID 持久化到浏览器 localStorage；受限浏览器的属性访问也可能抛错，整体降级为仅本次运行期有效。
+      storage: (() => { try { return window.localStorage; } catch { return undefined; } })(),
       visible: () => document.visibilityState === "visible",
     });
     ctx.effect(() => () => controller.dispose(), `${NS}.accountsController()`);

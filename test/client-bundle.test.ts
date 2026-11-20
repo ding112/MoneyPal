@@ -78,3 +78,55 @@ test("客户端 bundle 注册独立账户页面板、装载样式并随生命周
   assert.equal(styles.size, 0, "卸载后样式应移除");
   assert.equal(localeState.disposed, true, "locale 注册应随生命周期卸载");
 });
+
+test("bundle 在 localStorage 不可用时仍完成注册并装配样式", async () => {
+  const source = await readFile(new URL("../src/client.bundle.cjs", import.meta.url), "utf8");
+  const styles = new Map<string, Style>();
+  const document = {
+    visibilityState: "visible",
+    getElementById: (id: string) => styles.get(id) ?? null,
+    createElement: (tag: string) => {
+      assert.equal(tag, "style");
+      const style: Style = { id: "", textContent: "", remove: () => { styles.delete(style.id); } };
+      return style;
+    },
+    head: { append: (style: Style) => { styles.set(style.id, style); } },
+  };
+  let registration: Registration | undefined;
+  const definitions: Definition[] = [];
+  const disposers: Array<() => void> = [];
+  const context = {
+    // 受限浏览器在访问 window.localStorage 属性本身时即抛错（非读写失败）：bundle 不得因此崩溃。
+    window: {
+      __ModuleLoader__: { load: (value: typeof registration) => { registration = value; } },
+      get localStorage(): never { throw new Error("localStorage access denied"); },
+    },
+    document,
+    setTimeout,
+    clearTimeout,
+  };
+  try {
+    runInNewContext(source, context);
+    assert.ok(registration, "bundle 未调用 __ModuleLoader__.load");
+    const bundle = registration!.factory((name) => { if (name === "react") return {}; throw new Error(`不应加载模块：${name}`); });
+    bundle.apply({
+      connection: { rpc: { call: async () => { throw new Error("冒烟不应调用 RPC"); } } },
+      effect: (callback: () => () => void) => { const dispose = callback(); disposers.push(dispose); return dispose; },
+      slots: {
+        inject: (_name: string, callback: () => void) => { callback(); },
+        register: (definition: Definition) => { definitions.push(definition); return () => undefined; },
+      },
+      locale: {
+        register: () => () => undefined,
+        bind: () => (key: string) => key,
+        subscribe: () => () => undefined,
+        getLocale: () => ({ active: "zh", locales: [] as string[], revision: 0 }),
+      },
+    });
+    assert.deepEqual(definitions.map(({ name }) => name), ["sidebar.panellist", "main"], "存储不可用时面板注册不受影响");
+    assert.equal(styles.size, 1, "存储不可用时样式仍装配");
+  } finally {
+    for (const dispose of [...disposers].reverse()) dispose();
+  }
+  assert.equal(styles.size, 0, "卸载后样式应移除");
+});
