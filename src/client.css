@@ -278,6 +278,14 @@
   font-size: 11px;
 }
 
+/* 非候选登记项的引导行：独占一行，说明登记、初始化、检查目录或重试的下一步。 */
+.dsh-moneypal-balance-choice-guide {
+  flex: 1 1 100%;
+  color: var(--dsh-moneypal-balance-muted);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
 /* 金额：数值、币种、负值说明各自独立元素；空间不足时上下排列，不截断、不舍入 */
 .dsh-moneypal-balance-amount {
   min-width: 0;
@@ -584,6 +592,7 @@
   .dsh-moneypal-balance-page .dsh-moneypal-balance-footer,
   .dsh-moneypal-balance-page .dsh-moneypal-balance-choice-hint,
   .dsh-moneypal-balance-page .dsh-moneypal-balance-choice-status,
+  .dsh-moneypal-balance-page .dsh-moneypal-balance-choice-guide,
   .dsh-moneypal-balance-account-values .dsh-moneypal-balance-amount,
   .dsh-moneypal-balance-group-total .dsh-moneypal-balance-account-values .dsh-moneypal-balance-amount {
     font-size: 14px;

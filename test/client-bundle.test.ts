@@ -62,6 +62,11 @@ test("客户端 bundle 注册独立账户页面板、装载样式并随生命周
     });
     assert.equal(registered.namespace, "dsh-moneypal.accounts");
     assert.ok(Object.keys(registered.dicts?.zh ?? {}).length > 0 && Object.keys(registered.dicts?.en ?? {}).length > 0, "locale 字典缺少 zh/en");
+    // 视图模型输出的引导键与重新检测入口必须在两种语言的字典中存在，否则页面显示原始键名。
+    for (const key of ["page.recheck", "choice.guide.uninitialized", "choice.guide.invalid_layout", "choice.guide.unavailable"]) {
+      assert.ok(key in (registered.dicts?.zh ?? {}), `zh 字典缺少 ${key}`);
+      assert.ok(key in (registered.dicts?.en ?? {}), `en 字典缺少 ${key}`);
+    }
     // ADR-0006：同一面板 ID 同时注册 sidebar.panellist 入口与 main keyed 面板。
     assert.deepEqual(slots.map(({ definition }) => definition.name), ["sidebar.panellist", "main"]);
     assert.equal(slots[0]?.definition.id, "dsh-moneypal-accounts");

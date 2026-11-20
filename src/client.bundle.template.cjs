@@ -15,6 +15,7 @@ window.__ModuleLoader__.load({ id: "dsh-moneypal", factory: (require) => {
     "page.title": "恰恰账本",
     "page.asOf": "截至 {date}",
     "page.refresh": "刷新余额",
+    "page.recheck": "重新检测账本",
     "group.assets": "资产",
     "group.liabilities": "负债",
     "group.count": "{count} 个账户",
@@ -38,6 +39,9 @@ window.__ModuleLoader__.load({ id: "dsh-moneypal", factory: (require) => {
     "choice.status.uninitialized": "未初始化",
     "choice.status.invalid_layout": "目录不完整",
     "choice.status.unavailable": "暂时不可访问",
+    "choice.guide.uninitialized": "请在该工作区打开 MoneyPal 会话，按预览确认完成初始化。",
+    "choice.guide.invalid_layout": "请检查该工作区的现有账本目录。",
+    "choice.guide.unavailable": "工作区暂时无法访问，请稍后重试。",
     "banner.failedWithTime": "刷新失败，显示 {time} 的余额",
     "banner.failedNoTime": "刷新失败，显示的余额可能已过期。",
     "banner.pending": "余额可能已过期，正在获取最新数据。",
@@ -57,6 +61,7 @@ window.__ModuleLoader__.load({ id: "dsh-moneypal", factory: (require) => {
     "page.title": "MoneyPal Ledger",
     "page.asOf": "As of {date}",
     "page.refresh": "Refresh balances",
+    "page.recheck": "Re-check ledgers",
     "group.assets": "Assets",
     "group.liabilities": "Liabilities",
     "group.count": "Accounts: {count}",
@@ -80,6 +85,9 @@ window.__ModuleLoader__.load({ id: "dsh-moneypal", factory: (require) => {
     "choice.status.uninitialized": "Not initialized",
     "choice.status.invalid_layout": "Incomplete layout",
     "choice.status.unavailable": "Temporarily unreachable",
+    "choice.guide.uninitialized": "Open a MoneyPal session in this workspace and confirm the preview to initialize it.",
+    "choice.guide.invalid_layout": "Check the existing ledger directory in this workspace.",
+    "choice.guide.unavailable": "The workspace is temporarily unreachable; please retry later.",
     "banner.failedWithTime": "Refresh failed, showing balances from {time}",
     "banner.failedNoTime": "Refresh failed, the balances shown may be outdated.",
     "banner.pending": "Balances may be outdated; fetching the latest data.",
@@ -198,18 +206,16 @@ window.__ModuleLoader__.load({ id: "dsh-moneypal", factory: (require) => {
       React.createElement("p", { role: failed ? "alert" : undefined }, message),
       React.createElement("button", { type: "button", className: cls("banner-retry"), onClick: onRetry }, t("action.retry")));
   }
-  /* 多候选等待选择（首版最小选择器；持久化与完整选择器由后续票交付）：
-   * 只有 candidate 状态可选；同名候选展示宿主生成的目录提示；非候选展示状态、不可选。 */
-  function ChoiceList({ candidates, onSelect, t }) {
+  /* 选择列表（渲染 pageBodyView 的 choice 视图；首版最小选择器，持久化与完整选择器由后续票交付）：
+   * 只有 candidate 项可选；非候选项展示状态标签与对应引导（初始化 / 检查目录 / 重试）；同名候选展示宿主生成的目录提示。 */
+  function ChoiceList({ items, onSelect, t }) {
     return React.createElement("div", { className: cls("choice") },
       React.createElement("h3", null, t("choice.title")),
-      candidates.map((item) => {
-        const selectable = item.status === "candidate";
-        return React.createElement("button", { key: item.workspaceId, type: "button", className: cls("choice-item"), disabled: !selectable, onClick: () => onSelect(item.workspaceId) },
-          React.createElement("span", { className: cls("choice-name"), translate: "no" }, item.title),
-          item.directoryHint ? React.createElement("span", { className: cls("choice-hint"), translate: "no" }, item.directoryHint) : null,
-          selectable ? null : React.createElement("span", { className: cls("choice-status") }, t(`choice.status.${item.status}`)));
-      }));
+      items.map((item) => React.createElement("button", { key: item.workspaceId, type: "button", className: cls("choice-item"), disabled: !item.selectable, onClick: () => item.selectable && onSelect(item.workspaceId) },
+        React.createElement("span", { className: cls("choice-name"), translate: "no" }, item.title),
+        item.directoryHint ? React.createElement("span", { className: cls("choice-hint"), translate: "no" }, item.directoryHint) : null,
+        item.selectable ? null : React.createElement("span", { className: cls("choice-status") }, t(item.statusKey)),
+        item.selectable ? null : React.createElement("span", { className: cls("choice-guide") }, t(item.guideKey)))));
   }
   function PageHeader({ state, onRefresh, t, locale }) {
     const snapshot = state.snapshot;
@@ -219,7 +225,7 @@ window.__ModuleLoader__.load({ id: "dsh-moneypal", factory: (require) => {
         React.createElement("small", { className: cls("subtitle") },
           state.selectionTitle ? React.createElement("span", { className: cls("ledger-name"), translate: "no" }, state.selectionTitle) : null,
           snapshot ? React.createElement("span", null, t("page.asOf", { date: fmtAsOf(snapshot.asOf, locale) })) : null)),
-      React.createElement(Icon, { label: t("page.refresh"), onClick: onRefresh, disabled: state.loading || !state.selection }));
+      React.createElement(Icon, { label: state.selection ? t("page.refresh") : t("page.recheck"), onClick: onRefresh, disabled: state.loading || state.candidatesLoading }));
   }
   /* 页脚唯一状态模型：自上而下首项命中，同时给出文案键与圆点类型；圆点仅是视觉辅助（aria-hidden），含义由文字表达。 */
   function pageFooterStatus(state) {
@@ -236,28 +242,22 @@ window.__ModuleLoader__.load({ id: "dsh-moneypal", factory: (require) => {
     if (state.stale) return state.refreshedAt ? t("footer.lastSuccess", { time: fmtClock(state.refreshedAt, locale) }) : "—";
     return state.refreshedAt ? t("footer.updatedAt", { time: fmtClock(state.refreshedAt, locale) }) : "—";
   }
-  /* 页面正文的判定顺序固定：快照 → 选择内的加载/失败 → 候选加载/失败 → 零候选 → 等待选择；
-   * 空账本与“尚未发现账本”是不同状态、不同文案。 */
+  /* 页面正文：判定顺序集中在 runtime.pageBodyView（固定顺序、领域层测试覆盖），此处只做状态到元素的映射。
+   * 空账本（empty）与“尚未发现账本”（zero）是不同状态、不同文案；retryable 携带宿主净化的安全文案。 */
   function pageBodyFor({ state, onRefresh, onRetry, onSelect, t, locale }) {
-    const snapshot = state.snapshot;
-    if (snapshot) {
-      const empty = !snapshot.assets.accounts.length && !snapshot.liabilities.accounts.length;
-      if (empty && !state.loading) return StateBody({ title: t("empty.title"), description: t("empty.description"), action: t("action.refresh"), onAction: onRefresh });
+    const view = runtime.pageBodyView(state);
+    if (view.kind === "details") {
+      const snapshot = state.snapshot;
       const multipleCommodities = new Set([...snapshot.assets.totals, ...snapshot.liabilities.totals].map((amount) => amount.commodity)).size > 1;
       return React.createElement(React.Fragment, null,
         React.createElement(Details, { snapshot, t, locale }),
         multipleCommodities ? React.createElement("p", { className: cls("caption-line") }, t("overview.caption")) : null);
     }
-    if (state.selection) {
-      if (state.loading) return LoadingBody({ t });
-      if (state.error) return StateBody({ title: t("error.title"), description: state.error, action: t("action.retry"), alert: true, onAction: onRetry });
-      return LoadingBody({ t });
-    }
-    if (state.candidatesLoading) return LoadingBody({ t });
-    if (state.candidatesError) return StateBody({ title: t("error.title"), description: state.candidatesError, action: t("action.retry"), alert: true, onAction: onRetry });
-    const candidates = state.candidates ?? [];
-    if (!candidates.length) return StateBody({ title: t("zero.title"), description: t("zero.description") });
-    return ChoiceList({ candidates, onSelect, t });
+    if (view.kind === "empty") return StateBody({ title: t("empty.title"), description: t("empty.description"), action: t("action.refresh"), onAction: onRefresh });
+    if (view.kind === "retryable") return StateBody({ title: t("error.title"), description: view.message, action: t("action.retry"), alert: true, onAction: onRetry });
+    if (view.kind === "zero") return StateBody({ title: t("zero.title"), description: t("zero.description") });
+    if (view.kind === "choice") return ChoiceList({ items: view.items, onSelect, t });
+    return LoadingBody({ t });
   }
 
   /* ═══ 样式安装：命名空间 style 标签；安装/卸载均由宿主生命周期持有 ═══ */
@@ -312,12 +312,13 @@ window.__ModuleLoader__.load({ id: "dsh-moneypal", factory: (require) => {
       const { t, locale } = useLocale();
       // 挂载即激活：候选重验 → 选择规则 → 余额刷新；返回面板时由宿主重新挂载并再次激活。
       React.useEffect(() => { void controller.activate(); }, []);
-      // 手动刷新唯一入口：读取最新控制器状态；在途、页面隐藏或无选择时忽略，候选失败走重取候选。
+      // 手动刷新唯一入口：读取最新控制器状态；页面隐藏或在途时忽略。
+      // 有选择 → 刷新余额；无选择（零候选、非候选引导或候选失败）→ 重新预检候选。
       const reload = () => {
         const current = controller.state;
         if (document.visibilityState !== "visible") return;
         if (current.selection) { if (!current.loading) void controller.refresh(); return; }
-        if (current.candidatesError) void controller.retry();
+        if (!current.candidatesLoading) void controller.retry();
       };
       const status = pageFooterStatus(state);
       return React.createElement("div", { className: cls("page") },
