@@ -12,14 +12,20 @@ export interface WorkspaceRegistryView { list?: unknown; get?: unknown; }
 export type LedgerCandidateStatus = "candidate" | "uninitialized" | "invalid_layout" | "unavailable";
 export interface LedgerCandidate { workspaceId: string; title: string; status: LedgerCandidateStatus; directoryHint?: string; }
 
+/** 预检中间记录：在对外候选（LedgerCandidate）之外额外携带宿主解析路径，仅供目录提示计算内部使用，
+ * 绝不出现在候选结果中。 */
+interface LedgerEntry { workspaceId: string; path: string; title: string; status: LedgerCandidateStatus; }
+
 /** 候选查询：按登记顺序对每个工作区做入口预检（只检查工作区与账本入口，完整布局校验交给余额查询的引擎），
  * 并为同名候选生成目录提示。结果绝不包含工作区绝对路径。 */
 export async function ledgerCandidates(entities: unknown): Promise<LedgerCandidate[]> {
-  const items: Array<{ workspaceId: string; path: string; title: string; status: LedgerCandidateStatus }> = [];
+  const items: LedgerEntry[] = [];
   for (const value of Array.isArray(entities) ? entities : []) {
     const entity = (value ?? {}) as RegistryEntity;
     const workspaceId = typeof entity.id === "string" ? entity.id : "";
     const path = typeof entity.path === "string" ? entity.path : "";
+    // 缺 id/path 的畸形登记项静默跳过（不进入候选结果）是既定行为：宿主登记数据不受本插件控制，
+    // 单条畸形不应使整个候选查询失败。
     if (!workspaceId || !path) continue;
     items.push({ workspaceId, path, title: displayTitle(entity, path), status: await precheckWorkspace(path) });
   }
@@ -55,8 +61,8 @@ export async function probePath(path: string): Promise<"ok" | "missing" | "error
 
 /** 只有同名候选需要目录提示（ADR-0006）：组内逐级上溯取首个能区分各候选的目录尾段，
  * 以 "/" 连接展示；尾段永不以分隔符开头，因此不会泄露绝对路径。 */
-function withDirectoryHints(items: Array<{ workspaceId: string; path: string; title: string; status: LedgerCandidateStatus }>): LedgerCandidate[] {
-  const groups = new Map<string, Array<{ workspaceId: string; path: string }>>();
+function withDirectoryHints(items: LedgerEntry[]): LedgerCandidate[] {
+  const groups = new Map<string, Array<Pick<LedgerEntry, "workspaceId" | "path">>>();
   for (const item of items) {
     if (item.status !== "candidate") continue;
     const group = groups.get(item.title) ?? [];

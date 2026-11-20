@@ -76,24 +76,26 @@ async function handleBalance(ctx: HostContext, endpoint: "capability" | "balance
  * 服务缺失或 list 故障都是整体失败（workspace_registry_unavailable），与成功返回零个候选可区分。 */
 async function handleCandidates(ctx: HostContext): Promise<RpcResult> {
   try {
-    const registry = ctx.get("workspaceRegistry") as WorkspaceRegistryView | undefined;
-    if (!registry || typeof registry.list !== "function") throw new BalanceRpcError("workspace_registry_unavailable", REGISTRY_UNAVAILABLE_MESSAGE);
-    let entities: unknown;
-    try { entities = await (registry.list as () => unknown)(); } catch { throw new BalanceRpcError("workspace_registry_unavailable", REGISTRY_UNAVAILABLE_MESSAGE); }
+    const entities = await callRegistry(ctx, "list");
     return success({ candidates: await ledgerCandidates(entities) });
   } catch (error) {
     return failure(ctx, error, "ledger");
   }
 }
 
+/** 读取 workspaceRegistry 并调用指定方法：服务缺失、方法形状不符或调用故障统一抛出
+ * workspace_registry_unavailable（整体失败可重试），与「登记存在但查无记录」的专用错误码可区分。 */
+async function callRegistry(ctx: HostContext, method: "list" | "get", ...args: unknown[]): Promise<unknown> {
+  const registry = ctx.get("workspaceRegistry") as WorkspaceRegistryView | undefined;
+  if (!registry || typeof registry[method] !== "function") throw new BalanceRpcError("workspace_registry_unavailable", REGISTRY_UNAVAILABLE_MESSAGE);
+  try { return await (registry[method] as (...callArgs: unknown[]) => unknown)(...args); } catch { throw new BalanceRpcError("workspace_registry_unavailable", REGISTRY_UNAVAILABLE_MESSAGE); }
+}
+
 /** 余额查询：先验证请求格式，再按 ID 重新读取登记记录，把宿主解析出的工作区交给现有余额引擎。 */
 async function handleLedgerBalances(ctx: HostContext, payload: unknown, signal: AbortSignal): Promise<RpcResult> {
   try {
     const request = readLedgerRequest(payload);
-    const registry = ctx.get("workspaceRegistry") as WorkspaceRegistryView | undefined;
-    if (!registry || typeof registry.get !== "function") throw new BalanceRpcError("workspace_registry_unavailable", REGISTRY_UNAVAILABLE_MESSAGE);
-    let entity: unknown;
-    try { entity = await (registry.get as (id: string) => unknown)(request.workspaceId); } catch { throw new BalanceRpcError("workspace_registry_unavailable", REGISTRY_UNAVAILABLE_MESSAGE); }
+    const entity = await callRegistry(ctx, "get", request.workspaceId);
     const workspace = (entity ?? {}) as RegistryEntity;
     const path = typeof workspace.path === "string" ? workspace.path : "";
     if (!path) throw new BalanceRpcError("workspace_not_registered", "该账本工作区已不在 DSH 登记中，请重新选择。");

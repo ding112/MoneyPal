@@ -2,8 +2,10 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import type { BalanceSnapshot } from "../src/balance.js";
+// 候选类型以 ledger-registry 为单一来源（client.ts 只作 type-only 引用）。
+import type { LedgerCandidate } from "../src/ledger-registry.js";
 
-import { AccountsController, BalanceClientError, pageBodyView, rpcAccessDenied, type AccountsControllerState, type LedgerCandidate } from "../src/client.js";
+import { AccountsController, BalanceClientError, pageBodyView, pageFooterStatus, rpcAccessDenied, type AccountsControllerState } from "../src/client.js";
 
 const flush = () => new Promise<void>((resolve) => setImmediate(resolve));
 
@@ -842,12 +844,30 @@ test("正文判定顺序固定：选择内加载与失败优先，候选加载�
 });
 
 test("传输层错误按宿主拒绝状态码识别为访问拒绝，其余传输失败不视为拒绝", () => {
-  // DSH rpc-host 对非 owner 请求的 owner 专用精确路由以 HTTP 403 短路拒绝（不带 RPC 信封）；
-  // connection.rpc.call 抛出携带状态码的传输错误，只有 403 是宿主的显式拒绝访问。
+  // DSH rpc-host 对非 owner 请求的 owner 专用精确路由以 HTTP 403 短路拒绝（不带 RPC 信封）。
+  // 0.2.x 宿主 asar 实证：connection.rpc.call 把非 2xx 响应抛为纯 Error（message 含 "HTTP <status>"，无结构化字段），
+  // 只有 403 是宿主的显式拒绝访问；结构化 status/statusCode 字段为宿主未来版本预留，出现且为数字时优先于消息。
   assert.equal(rpcAccessDenied(new Error("transport failure for /api/dsh-moneypal/ledger-balances: HTTP 403")), true);
   assert.equal(rpcAccessDenied(new Error("transport failure for /api/dsh-moneypal/ledger-candidates: HTTP 403")), true);
+  assert.equal(rpcAccessDenied(Object.assign(new Error("transport failure for /api/dsh-moneypal/ledger-balances: HTTP 401"), { status: 403 })), true, "结构化 status 命中 403 即视为拒绝");
+  assert.equal(rpcAccessDenied(Object.assign(new Error("transport failure for /api/dsh-moneypal/ledger-balances: HTTP 401"), { statusCode: 401 })), false, "结构化状态同样只认 403");
   assert.equal(rpcAccessDenied(new Error("transport failure for /api/dsh-moneypal/ledger-balances: HTTP 401")), false, "未认证是可恢复状态，不等同于明确拒绝");
   assert.equal(rpcAccessDenied(new Error("transport failure for /api/dsh-moneypal/ledger-balances: HTTP 500")), false, "宿主故障走可重试路径，不清空余额");
   assert.equal(rpcAccessDenied(new Error("connection: invalid server-response envelope")), false);
   assert.equal(rpcAccessDenied(undefined), false, "非 Error 值不视为拒绝");
+});
+
+/* ═══ 页脚状态模型（bundle 渲染 footer；键为 bundle 字典契约） ═══ */
+
+test("页脚状态自上而下首项命中：失败优先于待更新，快照、候选与零候选各成状态", () => {
+  assert.deepEqual(pageFooterStatus(pageState({ error: "连接不可用", snapshot: snapshotFor("Assets:C-现金"), stale: true })), { key: "footer.refreshFailed", dot: "warning" }, "余额失败优先呈现为可重试");
+  assert.deepEqual(pageFooterStatus(pageState({ candidatesError: "暂时无法获取工作区列表，请稍后重试。" })), { key: "footer.refreshFailed", dot: "warning" }, "候选失败与余额失败同为刷新失败");
+  assert.deepEqual(pageFooterStatus(pageState({ selection: "w1", loading: true })), { key: "footer.waitingLedger", dot: "neutral" }, "无快照的加载是等待账本响应");
+  assert.deepEqual(pageFooterStatus(pageState({ selection: "w1", loading: true, snapshot: snapshotFor("Assets:C-现金") })), { key: "footer.refreshing", dot: "neutral" }, "有快照的加载是正在刷新");
+  assert.deepEqual(pageFooterStatus(pageState({ selection: "w1", stale: true, snapshot: snapshotFor("Assets:C-现金") })), { key: "footer.stale", dot: "warning" }, "旧快照待更新是警示");
+  const emptySnapshot: BalanceSnapshot = { asOf: "2026-08-27", assets: { accounts: [], totals: [] }, liabilities: { accounts: [], totals: [] } };
+  assert.deepEqual(pageFooterStatus(pageState({ selection: "w1", snapshot: emptySnapshot })), { key: "footer.noData", dot: "neutral" }, "空账本与有数据可区分");
+  assert.deepEqual(pageFooterStatus(pageState({ selection: "w1", snapshot: snapshotFor("Assets:C-现金") })), { key: "footer.updated", dot: "success" }, "最新快照是已更新");
+  assert.deepEqual(pageFooterStatus(pageState({ candidates: [candidate("w1")] })), { key: "footer.awaiting", dot: "neutral" }, "有候选待选择是等待选择账本");
+  assert.deepEqual(pageFooterStatus(pageState()), { key: "footer.zero", dot: "neutral" }, "无候选时是没有可查看的账本");
 });

@@ -186,6 +186,15 @@ test("注册表服务缺失或故障时候选查询返回稳定可重试错误",
   assert.equal(JSON.stringify(result).includes("registry down"), false);
 });
 
+test("registry 服务缺失时旧会话接口（capability/balances）不受影响", async () => {
+  const ledger = await workspace("registry-less");
+  const service = rpc(new Map([["ledger", { header: { cwd: ledger } }]]));
+  assert.deepEqual(await service.call("capability", { sessionId: "ledger" }), { ok: true, value: { ok: true, value: { candidate: true } } });
+  const result = await service.call("balances", { sessionId: "ledger", asOf: "2026-08-27" }) as { ok: true; value: { ok: true; value: { assets: { accounts: Array<{ account: string; amounts: Array<{ commodity: string; quantity: string }> }> } } } };
+  assert.equal(result.value.ok, true, "旧接口按 sessionId 语义工作，不读取 workspaceRegistry");
+  assert.deepEqual(result.value.value.assets.accounts[0]?.amounts[0], { commodity: "CNY", quantity: "1234.500" });
+});
+
 test("余额查询按 ID 重新解析登记并交给现有引擎", async () => {
   const ledger = await workspace("ledger-by-id");
   const service = rpc(new Map(), { workspaceRegistry: registry([entity("ledger", ledger)]) });

@@ -5,9 +5,12 @@ import { runInNewContext } from "node:vm";
 
 type Style = { id: string; textContent: string; remove(): void };
 type Definition = { name?: string; id?: string; key?: string; order?: number };
-type Registration = { id: string; factory: (require: (name: string) => unknown) => { apply: (context: unknown) => void; inject: string[] } };
+type Registration = { id?: string; factory: (require: (name: string) => unknown) => { apply: (context: unknown) => void; inject: string[] } };
 
-test("客户端 bundle 注册独立账户页面板、装载样式并随生命周期卸载", async () => {
+/** 共用夹具：读取 bundle 源码并装配 document、样式收集器与 __ModuleLoader__。
+ * localStorage 以 getter 挂载，取值函数返回值即属性读数、抛错即模拟受限浏览器访问属性即抛错；
+ * 返回工厂加载出的 bundle 与样式收集器，注册细节由各用例自行捕获断言。 */
+async function loadBundle(localStorage: () => unknown) {
   const source = await readFile(new URL("../src/client.bundle.cjs", import.meta.url), "utf8");
   const styles = new Map<string, Style>();
   const document = {
@@ -21,28 +24,22 @@ test("客户端 bundle 注册独立账户页面板、装载样式并随生命周
     head: { append: (style: Style) => { styles.set(style.id, style); } },
   };
   let registration: Registration | undefined;
+  const window: Record<string, unknown> = { __ModuleLoader__: { load: (value: typeof registration) => { registration = value; } } };
+  Object.defineProperty(window, "localStorage", { get: localStorage });
+  runInNewContext(source, { document, window, AbortController, setTimeout, clearTimeout });
+  assert.ok(registration, "bundle 未调用 __ModuleLoader__.load");
+  const bundle = registration!.factory((name) => { if (name === "react") return {}; throw new Error(`不应加载模块：${name}`); });
+  return { styles, bundle, registration: registration! };
+}
+
+test("客户端 bundle 注册独立账户页面板、装载样式并随生命周期卸载", async () => {
+  const { styles, bundle, registration } = await loadBundle(() => ({ getItem: () => null, setItem: () => undefined }));
+  const slots: Array<{ definition: Definition; component: unknown }> = [];
   const disposers: Array<() => void> = [];
   const localeState = { disposed: false };
   const registered: { namespace?: string; dicts?: Record<string, Record<string, string>> } = {};
-  const slots: Array<{ definition: Definition; component: unknown }> = [];
-  const context = {
-    window: {
-      __ModuleLoader__: { load: (value: typeof registration) => { registration = value; } },
-      localStorage: { getItem: () => null, setItem: () => undefined },
-    },
-    document,
-    AbortController,
-    setTimeout,
-    clearTimeout,
-  };
   try {
-    runInNewContext(source, context);
-    assert.ok(registration, "bundle 未调用 __ModuleLoader__.load");
-    assert.equal(registration!.id, "dsh-moneypal");
-    const bundle = registration!.factory((name) => {
-      if (name === "react") return {};
-      throw new Error(`冒烟不应加载模块：${name}`);
-    });
+    assert.equal(registration.id, "dsh-moneypal");
     assert.equal(typeof bundle.apply, "function");
     // 独立账户页不读取会话：不再注入 sessions。
     assert.deepEqual(Array.from(bundle.inject), ["slots", "connection", "locale"]);
@@ -85,35 +82,11 @@ test("客户端 bundle 注册独立账户页面板、装载样式并随生命周
 });
 
 test("bundle 在 localStorage 不可用时仍完成注册并装配样式", async () => {
-  const source = await readFile(new URL("../src/client.bundle.cjs", import.meta.url), "utf8");
-  const styles = new Map<string, Style>();
-  const document = {
-    visibilityState: "visible",
-    getElementById: (id: string) => styles.get(id) ?? null,
-    createElement: (tag: string) => {
-      assert.equal(tag, "style");
-      const style: Style = { id: "", textContent: "", remove: () => { styles.delete(style.id); } };
-      return style;
-    },
-    head: { append: (style: Style) => { styles.set(style.id, style); } },
-  };
-  let registration: Registration | undefined;
+  // 受限浏览器在访问 window.localStorage 属性本身时即抛错（非读写失败）：bundle 不得因此崩溃。
+  const { styles, bundle } = await loadBundle(() => { throw new Error("localStorage access denied"); });
   const definitions: Definition[] = [];
   const disposers: Array<() => void> = [];
-  const context = {
-    // 受限浏览器在访问 window.localStorage 属性本身时即抛错（非读写失败）：bundle 不得因此崩溃。
-    window: {
-      __ModuleLoader__: { load: (value: typeof registration) => { registration = value; } },
-      get localStorage(): never { throw new Error("localStorage access denied"); },
-    },
-    document,
-    setTimeout,
-    clearTimeout,
-  };
   try {
-    runInNewContext(source, context);
-    assert.ok(registration, "bundle 未调用 __ModuleLoader__.load");
-    const bundle = registration!.factory((name) => { if (name === "react") return {}; throw new Error(`不应加载模块：${name}`); });
     bundle.apply({
       connection: { rpc: { call: async () => { throw new Error("冒烟不应调用 RPC"); } } },
       effect: (callback: () => () => void) => { const dispose = callback(); disposers.push(dispose); return dispose; },
