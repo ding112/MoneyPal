@@ -309,10 +309,17 @@ export interface AccountsControllerState {
   error?: string;
 }
 
-export interface AccountsControllerOptions { rpc: LedgerRpc; now?: () => Date; visible?: () => boolean; }
+export interface AccountsControllerOptions {
+  rpc: LedgerRpc;
+  now?: () => Date;
+  visible?: () => boolean;
+  schedule?: (callback: () => void, ms: number) => ReturnType<typeof setTimeout>;
+  cancel?: (timer: ReturnType<typeof setTimeout>) => void;
+}
 
 /** 独立账户页控制器：候选加载、选择规则、余额请求隔离与刷新全部集中在此处；React 只订阅此状态。
- * 30 秒轮询、面板激活与标签可见性的刷新机制由后续票在 activate/refresh 的调用点扩展。 */
+ * 面板激活且标签可见时立即检查所选账本，并每 30 秒轮询；离开面板或隐藏标签时停止轮询并取消在途请求，
+ * 恢复时立即检查一次，重合的恢复通知经在途请求合并。 */
 export class AccountsController {
   #state: AccountsControllerState = { candidatesLoading: false, autoSelected: false, stale: false, loading: false };
   #listeners = new Set<(state: AccountsControllerState) => void>();
@@ -321,14 +328,19 @@ export class AccountsController {
   /** 同一时间至多一个有效余额请求；被替换、完成或清空时复位。 */
   #balanceInFlight = false;
   #disposed = false;
+  /** 面板当前是否激活：由 activate/deactivate 维护，轮询与刷新的公共前置条件。 */
+  #active = false;
+  #pollTimer: ReturnType<typeof setTimeout> | undefined;
   /** 选择被撤销（登记删除/重验失效）后置位：本运行期不再自动选择，等待用户手动选择。 */
   #manualChoiceRequired = false;
-  #rpc: LedgerRpc; #now: () => Date; #visible: () => boolean;
+  #rpc: LedgerRpc; #now: () => Date; #visible: () => boolean; #schedule: (callback: () => void, ms: number) => ReturnType<typeof setTimeout>; #cancel: (timer: ReturnType<typeof setTimeout>) => void;
 
   constructor(options: AccountsControllerOptions) {
     this.#rpc = options.rpc;
     this.#now = options.now ?? (() => new Date());
     this.#visible = options.visible ?? (() => document.visibilityState === "visible");
+    this.#schedule = options.schedule ?? ((callback, ms) => setTimeout(callback, ms));
+    this.#cancel = options.cancel ?? ((timer) => clearTimeout(timer));
   }
 
   get state(): AccountsControllerState { return this.#state; }
@@ -338,8 +350,26 @@ export class AccountsController {
    * 余额刷新为后台进行（void），页面挂载点无需等待；迟到的候选/余额结果按各自请求与当前选择丢弃。 */
   async activate(): Promise<void> {
     if (this.#disposed) return;
+    this.#active = true;
     if (!this.#state.candidatesLoading) await this.loadCandidates();
     this.#refreshAfterSelection();
+  }
+
+  /** 面板失活（宿主卸载独立页组件）：停止轮询并取消在途请求；同一账本的快照保留在页面内存，
+   * 返回面板时由 activate 重新检查。失活后 refresh 不再发起新请求，在途响应按失效丢弃。 */
+  deactivate(): void {
+    if (this.#disposed) return;
+    this.#active = false;
+    this.#stopPageActivity();
+  }
+
+  /** 标签可见性变化：隐藏时停止轮询并取消在途请求；恢复可见且面板激活时立即检查一次。
+   * 重合的恢复通知（与面板激活或重复的可见通知）经在途候选/余额请求合并为一次有效刷新。 */
+  visibleChanged(): void {
+    if (this.#disposed) return;
+    if (!this.#visible()) { this.#stopPageActivity(); return; }
+    if (!this.#active) return;
+    void this.#resumeAfterRecovery();
   }
 
   async loadCandidates(): Promise<void> {
@@ -371,8 +401,8 @@ export class AccountsController {
 
   async refresh(): Promise<void> {
     const selection = this.#state.selection;
-    if (!selection || this.#disposed || !this.#visible()) return;
-    // 同一时间只有一个有效余额请求：在途时忽略重复触发（手动刷新与轮询重叠亦然）。
+    if (!selection || this.#disposed || !this.#active || !this.#visible()) return;
+    // 同一时间只有一个有效余额请求：在途时忽略重复触发（手动刷新与轮询重叠、重合恢复通知亦然）。
     if (this.#balanceInFlight) return;
     this.#abortBalance();
     const request = new AbortController(); this.#balanceRequest = request; this.#balanceInFlight = true;
@@ -382,6 +412,7 @@ export class AccountsController {
       if (!this.#currentBalance(selection, request)) return;
       this.#balanceInFlight = false;
       this.#state = { ...this.#state, snapshot, refreshedAt: this.#now().getTime(), stale: false, loading: false }; this.emit();
+      this.#scheduleRefresh(POLL_MS);
     } catch (error) {
       if (!this.#currentBalance(selection, request)) return;
       if (error instanceof BalanceClientError && error.code === "workspace_not_registered") {
@@ -392,9 +423,10 @@ export class AccountsController {
         void this.loadCandidates();
         return;
       }
-      // 同一账本的临时失败保留旧余额并标记待更新；无快照时呈现可重试错误。
+      // 同一账本的临时失败保留旧余额并标记待更新；无快照时呈现可重试错误。轮询继续以便自动恢复。
       this.#balanceInFlight = false;
       this.#state = { ...this.#state, loading: false, stale: Boolean(this.#state.snapshot), error: safeMessage(error) }; this.emit();
+      this.#scheduleRefresh(POLL_MS);
     }
   }
 
@@ -408,13 +440,41 @@ export class AccountsController {
     this.#refreshAfterSelection();
   }
 
-  dispose(): void { this.#disposed = true; this.#abortCandidates(); this.#abortBalance(); this.#listeners.clear(); }
+  dispose(): void { this.#disposed = true; this.#active = false; this.#abortCandidates(); this.#abortBalance(); this.#cancelPollTimer(); this.#listeners.clear(); }
 
   /** 选择存在时的统一刷新入口：旧快照先标记待更新，再发起（或在途时合并）余额请求。 */
   #refreshAfterSelection(): void {
     if (!this.#state.selection || this.#disposed) return;
     if (this.#state.snapshot && !this.#state.stale) { this.#state = { ...this.#state, stale: true }; this.emit(); }
     void this.refresh();
+  }
+
+  /** 30 秒轮询链：只在面板激活、标签可见且有选择时续期；调度前先取消既有定时器，保证同一时间至多一个。 */
+  #scheduleRefresh(ms: number): void {
+    this.#cancelPollTimer();
+    if (!this.#disposed && this.#active && this.#visible() && this.#state.selection !== undefined && !this.#balanceInFlight) {
+      this.#pollTimer = this.#schedule(() => void this.refresh(), ms);
+    }
+  }
+  #cancelPollTimer(): void { if (this.#pollTimer !== undefined) this.#cancel(this.#pollTimer); this.#pollTimer = undefined; }
+
+  /** 离开面板/隐藏标签的统一停止：取消轮询与在途候选、余额请求；在途响应随后按请求失效丢弃，
+   * 不改写页面状态、不重启轮询。同账本的旧快照保留，恢复刷新时再标明待更新。 */
+  #stopPageActivity(): void {
+    this.#cancelPollTimer();
+    this.#abortBalance();
+    this.#abortCandidates();
+    if (this.#state.candidatesLoading || this.#state.loading) {
+      this.#state = { ...this.#state, candidatesLoading: false, loading: false };
+      this.emit();
+    }
+  }
+
+  /** 恢复可见的统一检查入口：候选结果缺失（隐藏期间被取消或尚未取得）时补一次候选检查，
+   * 随后按当前选择立即刷新；已在途的请求使重合通知合并。 */
+  async #resumeAfterRecovery(): Promise<void> {
+    if (this.#state.candidates === undefined && !this.#state.candidatesLoading) await this.loadCandidates();
+    this.#refreshAfterSelection();
   }
 
   #applyCandidates(candidates: LedgerCandidate[]): void {
@@ -436,14 +496,16 @@ export class AccountsController {
   }
 
   #applySelection(candidate: LedgerCandidate, auto: boolean): void {
-    // 切换选择即取消旧余额请求并清空其快照：迟到的旧结果因请求失效而丢弃。
+    // 切换选择即取消旧余额请求与既有轮询链并清空其快照：迟到的旧结果因请求失效而丢弃。
     this.#abortBalance();
+    this.#cancelPollTimer();
     this.#state = { ...this.#state, selection: candidate.workspaceId, selectionTitle: candidate.title, autoSelected: auto, snapshot: undefined, refreshedAt: undefined, stale: false, loading: true, error: undefined };
     this.emit();
   }
 
   #clearSelection(): void {
     this.#abortBalance();
+    this.#cancelPollTimer();
     this.#state = { ...this.#state, selection: undefined, selectionTitle: undefined, autoSelected: false, snapshot: undefined, refreshedAt: undefined, stale: false, loading: false, error: undefined };
     this.emit();
   }

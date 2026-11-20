@@ -308,8 +308,19 @@ window.__ModuleLoader__.load({ id: "dsh-moneypal", factory: (require) => {
     function AccountsPage() {
       const state = useAccountsState();
       const { t, locale } = useLocale();
-      // 挂载即激活：候选重验 → 选择规则 → 余额刷新；返回面板时由宿主重新挂载并再次激活。
-      React.useEffect(() => { void controller.activate(); }, []);
+      // 挂载即激活：候选重验 → 选择规则 → 余额刷新。DSH 主区按 activePanelId 渲染 keyed 面板，
+      // 离开面板时宿主卸载本组件，清理回调让控制器停止轮询并取消在途请求（同账本快照保留在页面内存）。
+      // 标签可见性驱动轮询：隐藏时停止并取消在途请求，恢复可见且面板激活时立即检查一次；
+      // 与面板激活重合的恢复通知由控制器经在途请求合并为一次有效刷新。
+      React.useEffect(() => {
+        void controller.activate();
+        const onVisibilityChange = () => controller.visibleChanged();
+        document.addEventListener("visibilitychange", onVisibilityChange);
+        return () => {
+          document.removeEventListener("visibilitychange", onVisibilityChange);
+          controller.deactivate();
+        };
+      }, []);
       // 手动刷新唯一入口：读取最新控制器状态；在途、页面隐藏或无选择时忽略，候选失败走重取候选。
       const reload = () => {
         const current = controller.state;

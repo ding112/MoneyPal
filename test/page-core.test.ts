@@ -20,8 +20,16 @@ interface Harness {
   state: () => AccountsControllerState;
   balanceCalls: () => number;
   candidateCalls: () => number;
+  /** 每次余额请求携带的 asOf，按调用顺序记录。 */
+  asOfCalls: () => string[];
   /** balances 走默认延迟实现时，按工作区 ID 取出未决请求的控制柄。 */
   pending: (workspaceId: string) => { release: (snapshot: BalanceSnapshot) => void; reject: (error: unknown) => void; signal: AbortSignal };
+  /** 可控时钟：set 重设当前时刻；advance 推进时间并按序触发到期的轮询定时器。 */
+  clock: { set: (date: Date) => void; advance: (ms: number) => Promise<void> };
+  /** 当前存活的定时器数：同一时间至多一个轮询定时器。 */
+  liveTimers: () => number;
+  /** 切换标签可见性，配合 controller.visibleChanged() 使用。 */
+  setVisible: (visible: boolean) => void;
 }
 
 function makeController(options: {
@@ -31,6 +39,13 @@ function makeController(options: {
   let balanceCalls = 0;
   let candidateCalls = 0;
   const pendingRequests = new Map<string, { release: (snapshot: BalanceSnapshot) => void; reject: (error: unknown) => void; signal: AbortSignal }>();
+  const asOfLog: string[] = [];
+  // 可控时钟与定时器夹具：轮询、跨日与恢复行为不依赖真实等待。
+  let currentTime = fixedNow().getTime();
+  let visibleNow = true;
+  const timers = new Set<{ callback: () => void; at: number }>();
+  const schedule = (callback: () => void, ms: number) => { const timer = { callback, at: currentTime + ms }; timers.add(timer); return timer as unknown as ReturnType<typeof setTimeout>; };
+  const cancel = (timer: unknown) => { timers.delete(timer as { callback: () => void; at: number }); };
   const rpc = {
     candidates: async () => {
       candidateCalls += 1;
@@ -40,12 +55,37 @@ function makeController(options: {
     },
     balances: async (workspaceId: string, asOf: string, signal: AbortSignal) => {
       balanceCalls += 1;
+      asOfLog.push(asOf);
       if (options.balances) return options.balances(workspaceId, asOf, signal);
       return new Promise<BalanceSnapshot>((resolve, reject) => { pendingRequests.set(workspaceId, { release: resolve, reject, signal }); });
     },
   };
-  const controller = new AccountsController({ rpc, now: fixedNow, visible: () => true });
-  return { controller, state: () => controller.state, balanceCalls: () => balanceCalls, candidateCalls: () => candidateCalls, pending: (workspaceId) => pendingRequests.get(workspaceId)! };
+  const controller = new AccountsController({ rpc, now: () => new Date(currentTime), visible: () => visibleNow, schedule, cancel });
+  const clock = {
+    set: (date: Date) => { currentTime = date.getTime(); },
+    advance: async (ms: number) => {
+      currentTime += ms;
+      // 轮询回调可能完成请求后再调度下一轮：循环触发直至无到期定时器。
+      for (let rounds = 0; rounds < 50; rounds += 1) {
+        const due = [...timers].filter((timer) => timer.at <= currentTime);
+        if (!due.length) break;
+        for (const timer of due) timers.delete(timer);
+        for (const timer of due) timer.callback();
+        await flush();
+      }
+    },
+  };
+  return {
+    controller,
+    state: () => controller.state,
+    balanceCalls: () => balanceCalls,
+    candidateCalls: () => candidateCalls,
+    asOfCalls: () => asOfLog,
+    pending: (workspaceId) => pendingRequests.get(workspaceId)!,
+    clock,
+    liveTimers: () => timers.size,
+    setVisible: (visible: boolean) => { visibleNow = visible; },
+  };
 }
 
 test("唯一候选自动选中并按当地日期读取余额", async () => {
@@ -256,6 +296,199 @@ test("候选重验发现所选工作区不再可查时清空并等待用户", as
     await harness.controller.select("w2");
     await flush();
     assert.equal(harness.state().selection, "w2");
+    assert.ok(harness.state().snapshot);
+  } finally { harness.controller.dispose(); }
+});
+
+test("激活面板且标签可见时立即检查，成功后每 30 秒轮询", async () => {
+  const harness = makeController({});
+  try {
+    await harness.controller.activate();
+    assert.equal(harness.balanceCalls(), 1, "激活时应立即检查所选账本");
+    const first = harness.pending("w1");
+    first.release(snapshotFor("Assets:C-第一次"));
+    await flush();
+    assert.equal(harness.liveTimers(), 1, "成功后应调度 30 秒轮询");
+    await harness.clock.advance(29_999);
+    assert.equal(harness.balanceCalls(), 1, "未满 30 秒不得提前轮询");
+    await harness.clock.advance(1);
+    assert.equal(harness.balanceCalls(), 2, "满 30 秒应发起下一次轮询");
+    harness.pending("w1").release(snapshotFor("Assets:C-第二次"));
+    await flush();
+    assert.equal(harness.liveTimers(), 1, "轮询完成后继续调度下一轮");
+  } finally { harness.controller.dispose(); }
+  assert.equal(harness.liveTimers(), 0, "卸载后不得残留轮询定时器");
+});
+
+test("跨午夜后的轮询按浏览器当地日期重新计算 asOf", async () => {
+  const harness = makeController({});
+  try {
+    harness.clock.set(new Date(2026, 7, 27, 23, 59, 40));
+    await harness.controller.activate();
+    assert.deepEqual(harness.asOfCalls(), ["2026-08-27"]);
+    harness.pending("w1").release(snapshotFor("Assets:C-现金"));
+    await flush();
+    await harness.clock.advance(30_000);
+    assert.deepEqual(harness.asOfCalls(), ["2026-08-27", "2026-08-28"], "跨午夜后的刷新应包含新一天");
+    harness.pending("w1").release(snapshotFor("Assets:C-次日"));
+    await flush();
+    assert.equal(harness.state().snapshot?.asOf, "2026-08-27", "快照保留宿主返回的截止日期，不受本地时钟影响");
+  } finally { harness.controller.dispose(); }
+});
+
+test("隐藏标签停止轮询并取消在途请求，失效响应不得改变状态或重启轮询", async () => {
+  const harness = makeController({});
+  try {
+    await harness.controller.activate();
+    harness.pending("w1").release(snapshotFor("Assets:C-现金"));
+    await flush();
+    await harness.clock.advance(30_000);
+    const inFlight = harness.pending("w1");
+    assert.equal(inFlight.signal.aborted, false);
+    harness.setVisible(false);
+    harness.controller.visibleChanged();
+    assert.equal(inFlight.signal.aborted, true, "隐藏标签应取消在途余额请求");
+    assert.equal(harness.liveTimers(), 0, "隐藏标签应停止轮询");
+    assert.equal(harness.state().loading, false);
+    const snapshotBefore = harness.state().snapshot;
+    const refreshedAtBefore = harness.state().refreshedAt;
+    inFlight.release(snapshotFor("Assets:C-隐藏后"));
+    await flush(); await flush();
+    assert.equal(harness.state().snapshot, snapshotBefore, "失效响应不得改写快照");
+    assert.equal(harness.state().refreshedAt, refreshedAtBefore);
+    assert.equal(harness.balanceCalls(), 2);
+    assert.equal(harness.liveTimers(), 0, "失效响应不得重启轮询");
+    harness.setVisible(true);
+    harness.controller.visibleChanged();
+    assert.equal(harness.balanceCalls(), 3, "恢复可见应立即检查一次");
+    assert.equal(harness.state().stale, true, "恢复刷新期间旧快照应标明待更新");
+    harness.pending("w1").release(snapshotFor("Assets:C-恢复"));
+    await flush();
+    assert.equal(harness.state().stale, false);
+    assert.equal(harness.liveTimers(), 1, "恢复成功后继续 30 秒轮询");
+  } finally { harness.controller.dispose(); }
+});
+
+test("离开面板停止轮询并取消在途请求，返回面板时立即检查一次", async () => {
+  const harness = makeController({});
+  try {
+    await harness.controller.activate();
+    harness.pending("w1").release(snapshotFor("Assets:C-现金"));
+    await flush();
+    await harness.clock.advance(30_000);
+    const inFlight = harness.pending("w1");
+    harness.controller.deactivate();
+    assert.equal(inFlight.signal.aborted, true, "离开面板应取消在途请求");
+    assert.equal(harness.liveTimers(), 0, "离开面板应停止轮询");
+    assert.equal(harness.state().snapshot?.assets.accounts[0]?.account, "Assets:C-现金", "同账本快照保留在页面内存");
+    inFlight.release(snapshotFor("Assets:C-离开后"));
+    await flush(); await flush();
+    assert.equal(harness.state().snapshot?.assets.accounts[0]?.account, "Assets:C-现金", "失效响应不得改写快照");
+    assert.equal(harness.liveTimers(), 0, "失效响应不得重启轮询");
+    await harness.controller.refresh();
+    assert.equal(harness.balanceCalls(), 2, "离开面板后不得发起新的余额请求");
+    await harness.controller.activate();
+    assert.equal(harness.balanceCalls(), 3, "返回面板应立即检查一次");
+    assert.equal(harness.state().stale, true, "恢复刷新期间旧快照应标明待更新");
+    harness.pending("w1").release(snapshotFor("Assets:C-返回"));
+    await flush();
+    assert.equal(harness.state().stale, false);
+    assert.equal(harness.liveTimers(), 1);
+  } finally { harness.controller.dispose(); }
+});
+
+test("重合的恢复通知合并为一次有效刷新", async () => {
+  const harness = makeController({});
+  try {
+    await harness.controller.activate();
+    harness.pending("w1").release(snapshotFor("Assets:C-现金"));
+    await flush();
+    harness.setVisible(false);
+    harness.controller.visibleChanged();
+    harness.setVisible(true);
+    // 同一次恢复里的重合通知：两次标签恢复通知 + 面板重新激活，只允许一次有效余额刷新。
+    harness.controller.visibleChanged();
+    const reactivation = harness.controller.activate();
+    harness.controller.visibleChanged();
+    await flush();
+    assert.equal(harness.balanceCalls(), 2, "重合的恢复通知应合并为一次有效余额刷新");
+    assert.equal(harness.state().stale, true, "恢复刷新期间旧快照应标明待更新");
+    harness.pending("w1").release(snapshotFor("Assets:C-恢复"));
+    await flush();
+    assert.equal(harness.state().stale, false);
+    await reactivation;
+    assert.equal(harness.liveTimers(), 1);
+  } finally { harness.controller.dispose(); }
+});
+
+test("手动刷新与轮询重叠时只有一个有效余额请求", async () => {
+  const harness = makeController({});
+  try {
+    await harness.controller.activate();
+    harness.pending("w1").release(snapshotFor("Assets:C-现金"));
+    await flush();
+    const manual = harness.controller.refresh();
+    assert.equal(harness.balanceCalls(), 2, "手动刷新立即发起请求");
+    await harness.clock.advance(30_000);
+    assert.equal(harness.balanceCalls(), 2, "轮询与在途手动刷新重叠时应合并");
+    harness.pending("w1").release(snapshotFor("Assets:C-手动"));
+    await flush();
+    await manual;
+    assert.equal(harness.state().snapshot?.assets.accounts[0]?.account, "Assets:C-手动");
+    assert.equal(harness.liveTimers(), 1, "慢请求完成后恢复唯一轮询链");
+    await harness.clock.advance(30_000);
+    assert.equal(harness.balanceCalls(), 3, "轮询链继续");
+    harness.pending("w1").release(snapshotFor("Assets:C-现金"));
+    await flush();
+  } finally { harness.controller.dispose(); }
+});
+
+test("轮询失败保留旧快照并继续 30 秒重试", async () => {
+  let fail = false;
+  const harness = makeController({
+    balances: async () => { if (fail) throw new BalanceClientError("balance_unavailable", "连接不可用"); return snapshotFor("Assets:C-现金"); },
+  });
+  try {
+    await harness.controller.activate();
+    await flush();
+    assert.equal(harness.state().stale, false);
+    fail = true;
+    await harness.clock.advance(30_000);
+    await flush();
+    assert.equal(harness.state().stale, true, "轮询失败应保留旧快照并标记待更新");
+    assert.equal(harness.state().error, "连接不可用");
+    assert.equal(harness.liveTimers(), 1, "失败后仍应继续 30 秒轮询");
+    fail = false;
+    await harness.clock.advance(30_000);
+    await flush();
+    assert.equal(harness.state().stale, false, "下一次轮询成功后解除待更新");
+    assert.equal(harness.state().error, undefined);
+  } finally { harness.controller.dispose(); }
+});
+
+test("隐藏打断首次候选查询时，恢复可见重新检查候选并继续查询", async () => {
+  let releaseCandidates: ((value: { candidates: LedgerCandidate[] }) => void) | undefined;
+  const harness = makeController({
+    candidates: () => new Promise((resolve) => { releaseCandidates = resolve; }),
+  });
+  try {
+    // 候选请求保持未决：activate 不必等待，候选请求在同步段即已发出。
+    void harness.controller.activate();
+    await flush();
+    assert.equal(harness.candidateCalls(), 1);
+    harness.setVisible(false);
+    harness.controller.visibleChanged();
+    assert.equal(harness.state().candidatesLoading, false, "隐藏应取消在途候选请求");
+    harness.setVisible(true);
+    harness.controller.visibleChanged();
+    await flush();
+    assert.equal(harness.candidateCalls(), 2, "恢复可见应补一次候选检查");
+    releaseCandidates!({ candidates: [candidate("w1")] });
+    await flush(); await flush();
+    assert.equal(harness.state().selection, "w1", "候选就绪后仍按选择规则自动选中");
+    assert.equal(harness.balanceCalls(), 1, "候选就绪后自动开始余额查询");
+    harness.pending("w1").release(snapshotFor("Assets:C-现金"));
+    await flush();
     assert.ok(harness.state().snapshot);
   } finally { harness.controller.dispose(); }
 });
