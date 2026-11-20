@@ -272,21 +272,22 @@ window.__ModuleLoader__.load({ id: "dsh-moneypal", factory: (require) => {
 
   /* ═══ DSH 接入：RPC 适配、controller、panel 注册与生命周期 ═══ */
   const callError = (error) => new runtime.BalanceClientError(error?.code ?? "balance_unavailable", error?.message ?? "暂时无法读取账户余额，请重试。");
-  /* 宿主对 owner 专用精确 /api 路由的访问拒绝不带 RPC 信封：非 owner 请求被 DSH rpc-host 以 HTTP 403 短路拒绝
-   * （0.2.1-rc.2 已核对），connection.rpc.call 抛出携带状态码的传输错误。识别后映射为 workspace_access_denied，
-   * 控制器把它与 workspace_not_registered 同等清空；其余传输失败（含 401 与 5xx）保持原样走可重试路径，不等同于登记移除。 */
-  const rpcCall = async (method, payload, signal) => {
-    try { return await ctx.connection.rpc.call("/api", method, payload, signal); }
-    catch (error) {
-      if (runtime.rpcAccessDenied(error)) throw new runtime.BalanceClientError("workspace_access_denied", "宿主拒绝了本次访问，请稍后重试。");
-      throw error;
-    }
-  };
   const INJECT = ["slots", "connection", "locale"];
 
   function apply(ctx) {
     installStyle();
     ctx.effect(() => removeStyle, `${NS}.style()`);
+    /* 宿主对 owner 专用精确 /api 路由的访问拒绝不带 RPC 信封：非 owner 请求被 DSH rpc-host 以 HTTP 403 短路拒绝
+     * （0.2.1-rc.2 已核对），connection.rpc.call 抛出携带状态码的传输错误。识别后映射为 workspace_access_denied，
+     * 控制器把它与 workspace_not_registered 同等清空；其余传输失败（含 401 与 5xx）保持原样走可重试路径，不等同于登记移除。
+     * 适配器持有 apply 注入的 ctx：模块作用域没有 ctx，抽出去会成为运行时 ReferenceError。 */
+    const rpcCall = async (method, payload, signal) => {
+      try { return await ctx.connection.rpc.call("/api", method, payload, signal); }
+      catch (error) {
+        if (runtime.rpcAccessDenied(error)) throw new runtime.BalanceClientError("workspace_access_denied", "宿主拒绝了本次访问，请稍后重试。");
+        throw error;
+      }
+    };
     const controller = new runtime.AccountsController({
       rpc: {
         candidates: async (signal) => { const outer = await rpcCall("dsh-moneypal/ledger-candidates", {}, signal); if (!outer?.ok) throw callError(); const inner = outer.value; if (!inner?.ok) throw callError(inner?.error); return inner.value; },
