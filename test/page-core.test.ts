@@ -3,7 +3,7 @@ import { test } from "node:test";
 
 import type { BalanceSnapshot } from "../src/balance.js";
 
-import { AccountsController, BalanceClientError, type AccountsControllerState, type LedgerCandidate } from "../src/client.js";
+import { AccountsController, BalanceClientError, pageBodyView, type AccountsControllerState, type LedgerCandidate } from "../src/client.js";
 
 const flush = () => new Promise<void>((resolve) => setImmediate(resolve));
 
@@ -123,6 +123,52 @@ test("零候选不发起余额查询，与查询失败可区分", async () => {
   } finally { harness.controller.dispose(); }
 });
 
+test("混合四类状态时只有 candidate 计入自动选择", async () => {
+  const harness = makeController({ candidates: [
+    candidate("u1", "uninitialized", "新工作区"),
+    candidate("i1", "invalid_layout", "旧目录", "shared/old"),
+    candidate("g1", "unavailable", "离线账本"),
+    candidate("w1", "candidate", "家庭账本", "home/ledger"),
+  ] });
+  try {
+    await harness.controller.activate();
+    assert.deepEqual(harness.state().candidates?.map((item) => item.workspaceId), ["u1", "i1", "g1", "w1"]);
+    assert.equal(harness.state().selection, "w1", "uninitialized/invalid_layout/unavailable 登记项不得触发自动选择");
+    assert.equal(harness.state().autoSelected, true);
+    assert.equal(harness.state().selectionTitle, "家庭账本");
+    assert.equal(harness.balanceCalls(), 1, "只应查询被选中的 candidate");
+    assert.equal(harness.pending("w1").signal.aborted, false);
+  } finally { harness.controller.dispose(); }
+});
+
+test("非候选登记项不触发选择，完成初始化后手动重试即重新预检并自动选中", async () => {
+  let initialized = false;
+  let candidateCalls = 0;
+  const harness = makeController({
+    candidates: async () => { candidateCalls += 1; return { candidates: [candidate("u1", initialized ? "candidate" : "uninitialized", "新工作区")] }; },
+  });
+  try {
+    await harness.controller.activate();
+    assert.equal(harness.state().selection, undefined, "未初始化的登记项不得被自动选中");
+    assert.equal(harness.state().candidates?.[0]?.status, "uninitialized");
+    assert.equal(harness.balanceCalls(), 0);
+    // 手动重试（尚未完成初始化）：重新预检，仍不选择、不查询
+    await harness.controller.retry();
+    assert.equal(candidateCalls, 2, "手动重试应重新预检候选");
+    assert.equal(harness.state().selection, undefined);
+    assert.equal(harness.balanceCalls(), 0);
+    // 在目标工作区完成初始化后手动重试：符合条件即自动选中并查询余额
+    initialized = true;
+    await harness.controller.retry();
+    assert.equal(harness.state().selection, "u1");
+    assert.equal(harness.state().autoSelected, true);
+    const request = harness.pending("u1");
+    request.release(snapshotFor("Assets:C-现金"));
+    await flush();
+    assert.ok(harness.state().snapshot);
+  } finally { harness.controller.dispose(); }
+});
+
 test("候选查询失败呈现可重试状态，重试成功后恢复自动选择", async () => {
   let fail = true;
   const harness = makeController({
@@ -210,6 +256,27 @@ test("临时失败保留同一账本的旧余额并标记过期，重试成功�
   } finally { harness.controller.dispose(); }
 });
 
+test("完整布局校验失败保留可重试的布局错误，不清空选择", async () => {
+  let fail = true;
+  const harness = makeController({
+    balances: async () => { if (fail) throw new BalanceClientError("invalid_ledger_layout", "账本布局不符合 MoneyPal 的 Beancount 约束；请修复后重试。"); return snapshotFor("Assets:C-现金"); },
+  });
+  try {
+    await harness.controller.activate();
+    await flush();
+    assert.equal(harness.state().selection, "w1", "布局错误不得像登记删除一样清空选择");
+    assert.equal(harness.state().snapshot, undefined);
+    assert.equal(harness.state().error, "账本布局不符合 MoneyPal 的 Beancount 约束；请修复后重试。");
+    assert.equal(harness.state().loading, false);
+    // 修复目录后重试：重新校验并恢复余额
+    fail = false;
+    await harness.controller.retry();
+    await flush();
+    assert.equal(harness.state().error, undefined);
+    assert.ok(harness.state().snapshot);
+  } finally { harness.controller.dispose(); }
+});
+
 test("宿主确认登记已删除时清空快照并等待用户重新选择", async () => {
   let candidateRounds = 0;
   let balanceCalls = 0;
@@ -284,4 +351,40 @@ test("卸载后迟到结果与在途请求不再驱动状态", async () => {
     assert.equal(harness.candidateCalls(), candidateCalls, "卸载后不得发起新的候选查询");
     assert.equal(harness.balanceCalls(), 1, "卸载后不得发起新的余额请求");
   } finally { controller.dispose(); }
+});
+
+/* ═══ 页面正文视图模型（bundle 按此渲染；键为 bundle 字典契约） ═══ */
+
+const pageState = (overrides: Partial<AccountsControllerState> = {}): AccountsControllerState =>
+  ({ candidatesLoading: false, autoSelected: false, stale: false, loading: false, ...overrides });
+
+test("页面正文区分空余额、明细与零候选引导", () => {
+  const emptySnapshot: BalanceSnapshot = { asOf: "2026-08-27", assets: { accounts: [], totals: [] }, liabilities: { accounts: [], totals: [] } };
+  assert.deepEqual(pageBodyView(pageState({ selection: "w1", snapshot: emptySnapshot })), { kind: "empty" }, "查询成功但无资产负债余额应是空余额状态");
+  assert.deepEqual(pageBodyView(pageState({ selection: "w1", snapshot: emptySnapshot, loading: true })), { kind: "details" }, "空账本刷新期间仍呈现明细骨架");
+  assert.deepEqual(pageBodyView(pageState({ selection: "w1", snapshot: snapshotFor("Assets:C-现金") })), { kind: "details" });
+  assert.deepEqual(pageBodyView(pageState({ candidates: [] })), { kind: "zero" }, "零候选是登记引导，与空余额是不同状态");
+});
+
+test("候选列表按四类状态渲染为可选或对应引导键", () => {
+  const view = pageBodyView(pageState({ candidates: [
+    candidate("w1", "candidate", "家庭账本", "home/ledger"),
+    candidate("u1", "uninitialized", "新工作区"),
+    candidate("i1", "invalid_layout", "旧目录"),
+    candidate("g1", "unavailable", "离线账本"),
+  ] }));
+  assert.deepEqual(view, { kind: "choice", items: [
+    { workspaceId: "w1", title: "家庭账本", status: "candidate", directoryHint: "home/ledger", selectable: true },
+    { workspaceId: "u1", title: "新工作区", status: "uninitialized", selectable: false, statusKey: "choice.status.uninitialized", guideKey: "choice.guide.uninitialized" },
+    { workspaceId: "i1", title: "旧目录", status: "invalid_layout", selectable: false, statusKey: "choice.status.invalid_layout", guideKey: "choice.guide.invalid_layout" },
+    { workspaceId: "g1", title: "离线账本", status: "unavailable", selectable: false, statusKey: "choice.status.unavailable", guideKey: "choice.guide.unavailable" },
+  ] }, "candidate 可选；其余状态带状态标签与引导键，目录提示原样保留");
+});
+
+test("正文判定顺序固定：选择内加载与失败优先，候选加载、失败与零候选互不混淆", () => {
+  assert.deepEqual(pageBodyView(pageState({ selection: "w1", loading: true })), { kind: "loading" });
+  assert.deepEqual(pageBodyView(pageState({ selection: "w1", error: "连接不可用" })), { kind: "retryable", message: "连接不可用" });
+  assert.deepEqual(pageBodyView(pageState({ candidatesLoading: true })), { kind: "loading" });
+  assert.deepEqual(pageBodyView(pageState({ candidatesError: "暂时无法获取工作区列表，请稍后重试。" })), { kind: "retryable", message: "暂时无法获取工作区列表，请稍后重试。" });
+  assert.deepEqual(pageBodyView(pageState({ selection: "w1", error: "连接不可用", candidatesError: "暂时无法获取工作区列表，请稍后重试。" })), { kind: "retryable", message: "连接不可用" }, "选择内的失败先于候选失败呈现");
 });

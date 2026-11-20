@@ -398,13 +398,11 @@ export class AccountsController {
     }
   }
 
-  /** 手动重试入口：候选失败（或尚未取得）时重取候选；已有选择时重试余额请求。 */
+  /** 手动重试入口：无选择时（零候选、非候选引导或候选失败）重新预检候选；已有选择时重试余额请求。
+   * 登记、初始化或目录修复完成后，用户无需重开页面即可通过重试触发新的预检。 */
   async retry(): Promise<void> {
     if (this.#disposed) return;
-    if (!this.#state.selection) {
-      if (!this.#state.candidatesError && this.#state.candidates !== undefined) return;
-      await this.loadCandidates();
-    }
+    if (!this.#state.selection) await this.loadCandidates();
     this.#refreshAfterSelection();
   }
 
@@ -453,4 +451,49 @@ export class AccountsController {
   #abortCandidates(): void { this.#candidatesRequest?.abort(); this.#candidatesRequest = undefined; }
   #abortBalance(): void { this.#balanceRequest?.abort(); this.#balanceRequest = undefined; this.#balanceInFlight = false; }
   private emit(): void { for (const listener of this.#listeners) listener(this.#state); }
+}
+
+/* ═══ 页面正文视图模型：bundle 按此渲染；文案键是与 bundle 字典的契约 ═══ */
+
+/** 选择列表项：candidate 可选；其余状态附状态标签与引导键（初始化引导 / 检查目录 / 重试）。 */
+export interface PageCandidateItem extends LedgerCandidate { selectable: boolean; statusKey?: string; guideKey?: string; }
+
+export type PageBodyView =
+  | { kind: "details" }
+  | { kind: "empty" }
+  | { kind: "loading" }
+  | { kind: "retryable"; message: string }
+  | { kind: "zero" }
+  | { kind: "choice"; items: PageCandidateItem[] };
+
+const CHOICE_GUIDE: Record<Exclude<LedgerCandidateStatus, "candidate">, string> = {
+  uninitialized: "choice.guide.uninitialized",
+  invalid_layout: "choice.guide.invalid_layout",
+  unavailable: "choice.guide.unavailable",
+};
+
+function candidateItem(item: LedgerCandidate): PageCandidateItem {
+  if (item.status === "candidate") return { ...item, selectable: true };
+  return { ...item, selectable: false, statusKey: `choice.status.${item.status}`, guideKey: CHOICE_GUIDE[item.status] };
+}
+
+/** 页面正文判定（顺序固定）：快照（空余额单独成态）→ 选择内加载/失败 → 候选加载/失败 → 零候选引导 → 选择列表。
+ * 空余额与零候选是不同状态；retryable 携带可重试错误的安全文案。 */
+export function pageBodyView(state: AccountsControllerState): PageBodyView {
+  const snapshot = state.snapshot;
+  if (snapshot) {
+    const empty = !snapshot.assets.accounts.length && !snapshot.liabilities.accounts.length;
+    if (empty && !state.loading) return { kind: "empty" };
+    return { kind: "details" };
+  }
+  if (state.selection) {
+    if (state.loading) return { kind: "loading" };
+    if (state.error) return { kind: "retryable", message: state.error };
+    return { kind: "loading" };
+  }
+  if (state.candidatesLoading) return { kind: "loading" };
+  if (state.candidatesError) return { kind: "retryable", message: state.candidatesError };
+  const candidates = state.candidates ?? [];
+  if (!candidates.length) return { kind: "zero" };
+  return { kind: "choice", items: candidates.map(candidateItem) };
 }
