@@ -66,6 +66,13 @@
   letter-spacing: -0.5px;
 }
 
+.dsh-moneypal-balance-ledger-picker {
+  max-inline-size: 100%;
+  font: inherit;
+  color: inherit;
+  background: var(--background, Canvas);
+}
+
 .dsh-moneypal-balance-subtitle {
   display: flex;
   flex-wrap: wrap;

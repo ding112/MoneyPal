@@ -1,5 +1,7 @@
 # 使用 DSH 原生余额抽屉
 
+[ADR-0006](./0006-bind-accounts-page-to-registered-workspace.md) 已替代本决策中的余额界面导航和账本绑定。旧会话余额接口沿用本文的会话绑定。
+
 账户余额界面使用 DSH 原生会话标题栏和全局浮层槽位，不依赖第三方侧栏。包根 `dsh-moneypal` 作为 Web profile 的全局只读适配器：bundle patch 以精确包根挂载 Cordis 宿主入口，同一包根也是 DSH 客户端包发现的接缝，负责加载客户端并通过仅限本机的 Connection RPC 查询当前已挂载账本会话；`apply`、`inject`、`name` 三个宿主装配导出由包根承担，不拆分到子路径入口。现有 `dsh-moneypal/dsh` 仍只在账本预设中提供会话级 Agent 财务工具。这样保留财务工具的会话边界并减少运行时依赖，代价是插件需要自行维护抽屉交互，且余额界面不具备工作台式分栏和拖拽能力。
 
 ## Considered Options

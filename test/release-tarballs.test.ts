@@ -17,7 +17,7 @@ const { exportTarballs } = (await import(pathToFileURL(join(workspace, "scripts"
 // 假 npm 只负责 pack/init/install，用来在不触碰真实 registry 与宿主运行时的前提下走完 tarball 验收。
 const shim = `#!/usr/bin/env node
 const { execFileSync } = require("node:child_process");
-const { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } = require("node:fs");
+const { appendFileSync, chmodSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } = require("node:fs");
 const { dirname, join } = require("node:path");
 
 const args = process.argv.slice(2);
@@ -58,12 +58,14 @@ if (command === "install") {
     name,
     version,
     type: "module",
-    exports: { ".": { types: "./index.d.ts", import: "./index.js" }, "./package.json": "./package.json" },
+    exports: { ".": { types: "./index.d.ts", import: "./index.js" }, "./client": { types: "./dist/src/client.d.ts", default: "./dist/src/client.bundle.cjs" }, "./package.json": "./package.json" },
   }));
   writeFileSync(join(target, "index.js"), "export const fixture = true;\\n");
   writeFileSync(join(target, "index.d.ts"), "export declare const fixture: boolean;\\n");
   writeFileSync(join(target, "README.md"), "fixture\\n");
   writeFileSync(join(target, "dist", "src", "finance", "bridge.py"), "fixture content\\n");
+  cpSync(process.env.FAKE_CLIENT_DECLARATIONS, join(target, "dist", "src"), { recursive: true,
+    filter: (path) => path.endsWith(".d.ts") || statSync(path).isDirectory() });
   writeFileSync(join(target, "dist", "src", "client.bundle.cjs"), "module.exports = {};\\n");
   const bin = join(process.cwd(), "node_modules", ".bin");
   mkdirSync(bin, { recursive: true });
@@ -86,7 +88,7 @@ async function runTarballs(t: TestContext, extra: Record<string, string>) {
   try {
     const { stdout } = await execute(process.execPath, [join(workspace, "scripts", "release-tarballs.mjs")], {
       cwd: workspace,
-      env: { ...process.env, PATH: `${bin}:${process.env.PATH ?? ""}`, MONEYPAL_TARBALL_OUTPUT: output, ...extra },
+      env: { ...process.env, PATH: `${bin}:${process.env.PATH ?? ""}`, MONEYPAL_TARBALL_OUTPUT: output, FAKE_CLIENT_DECLARATIONS: join(workspace, "dist", "src"), ...extra },
     });
     return { code: 0, stdout, output };
   } catch (error) {

@@ -648,7 +648,9 @@ test("隐藏标签停止轮询并取消在途请求，失效响应不得改变�
     assert.equal(harness.liveTimers(), 0, "失效响应不得重启轮询");
     harness.setVisible(true);
     harness.controller.visibleChanged();
-    assert.equal(harness.balanceCalls(), 3, "恢复可见应立即检查一次");
+    assert.equal(harness.state().stale, true, "候选检查期间旧快照已标明待更新");
+    await flush();
+    assert.equal(harness.balanceCalls(), 3, "候选检查后应立即查询一次余额");
     assert.equal(harness.state().stale, true, "恢复刷新期间旧快照应标明待更新");
     harness.pending("w1").release(snapshotFor("Assets:C-恢复"));
     await flush();
@@ -751,6 +753,63 @@ test("轮询失败保留旧快照并继续 30 秒重试", async () => {
     await flush();
     assert.equal(harness.state().stale, false, "下一次轮询成功后解除待更新");
     assert.equal(harness.state().error, undefined);
+  } finally { harness.controller.dispose(); }
+});
+
+test("候选接口拒绝访问时立即撤销已有余额和在途请求", async () => {
+  let denied = false;
+  const harness = makeController({
+    candidates: async () => {
+      if (denied) throw new BalanceClientError("workspace_access_denied", "访问被拒绝");
+      return { candidates: [candidate("w1")] };
+    },
+  });
+  try {
+    await harness.controller.activate();
+    harness.pending("w1").release(snapshotFor("Assets:C-现金"));
+    await flush();
+    await harness.clock.advance(30_000);
+    const inFlight = harness.pending("w1");
+    denied = true;
+    await harness.controller.activate();
+    assert.equal(inFlight.signal.aborted, true);
+    assert.equal(harness.state().snapshot, undefined);
+    assert.equal(harness.state().refreshedAt, undefined);
+    assert.equal(harness.state().selection, undefined);
+    assert.equal(harness.state().candidates, undefined);
+    assert.equal(pageBodyView(harness.state()).kind, "retryable");
+    assert.equal(harness.liveTimers(), 0);
+    inFlight.release(snapshotFor("Assets:C-迟到余额"));
+    await flush();
+    assert.equal(harness.state().snapshot, undefined);
+    denied = false;
+    await harness.controller.retry();
+    assert.equal(harness.state().selection, undefined, "恢复读权限后仍须手动重选");
+    assert.equal(pageBodyView(harness.state()).kind, "choice");
+  } finally { harness.controller.dispose(); }
+});
+
+test("零候选恢复可见时重新检测登记，并在加载时显示检测状态", async () => {
+  let resolveCandidates: ((value: { candidates: LedgerCandidate[] }) => void) | undefined;
+  const harness = makeController({
+    candidates: () => new Promise((resolve) => { resolveCandidates = resolve; }),
+  });
+  try {
+    const firstCheck = harness.controller.activate();
+    assert.equal(pageFooterStatus(harness.state()).key, "footer.checkingLedgers");
+    resolveCandidates!({ candidates: [] });
+    await firstCheck;
+    assert.equal(pageFooterStatus(harness.state()).key, "footer.zero");
+    harness.setVisible(false);
+    harness.controller.visibleChanged();
+    harness.setVisible(true);
+    harness.controller.visibleChanged();
+    assert.equal(harness.candidateCalls(), 2);
+    assert.equal(pageFooterStatus(harness.state()).key, "footer.checkingLedgers");
+    resolveCandidates!({ candidates: [candidate("w1")] });
+    await flush();
+    assert.equal(harness.state().selection, "w1");
+    assert.equal(harness.balanceCalls(), 1);
   } finally { harness.controller.dispose(); }
 });
 
@@ -869,5 +928,5 @@ test("页脚状态自上而下首项命中：失败优先于待更新，快照�
   assert.deepEqual(pageFooterStatus(pageState({ selection: "w1", snapshot: emptySnapshot })), { key: "footer.noData", dot: "neutral" }, "空账本与有数据可区分");
   assert.deepEqual(pageFooterStatus(pageState({ selection: "w1", snapshot: snapshotFor("Assets:C-现金") })), { key: "footer.updated", dot: "success" }, "最新快照是已更新");
   assert.deepEqual(pageFooterStatus(pageState({ candidates: [candidate("w1")] })), { key: "footer.awaiting", dot: "neutral" }, "有候选待选择是等待选择账本");
-  assert.deepEqual(pageFooterStatus(pageState()), { key: "footer.zero", dot: "neutral" }, "无候选时是没有可查看的账本");
+  assert.deepEqual(pageFooterStatus(pageState({ candidates: [] })), { key: "footer.zero", dot: "neutral" }, "成功取得空列表时显示零候选");
 });

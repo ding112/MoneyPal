@@ -1,6 +1,33 @@
-import type { BalanceSnapshot } from "./balance.js";
+import type { BalanceAccount, BalanceSnapshot } from "./balance.js";
 // 候选类型以 ledger-registry 为单一来源；本文件只作类型引用（bundle 由本文件单独转译，type-only import 不产生运行时依赖）。
 import type { LedgerCandidate, LedgerCandidateStatus } from "./ledger-registry.js";
+
+/** @deprecated 旧会话余额抽屉类型。 */
+export type Capability = "unknown" | "candidate" | "ordinary";
+/** @deprecated 旧会话余额抽屉类型。 */
+export interface BalanceRpc { capability(sessionId: string, signal: AbortSignal): Promise<boolean>; balances(sessionId: string, asOf: string, signal: AbortSignal): Promise<BalanceSnapshot>; }
+/** @deprecated 旧会话余额抽屉类型。 */
+export interface BalanceControllerState { sessionId?: string; presetId?: string; compact: boolean; capability: Capability; open: boolean; snapshot?: BalanceSnapshot; refreshedAt?: number; stale: boolean; loading: boolean; error?: string; probeError?: string; }
+/** @deprecated 旧会话余额抽屉类型。 */
+export interface BalanceControllerOptions { rpc: BalanceRpc; now?: () => Date; visible?: () => boolean; schedule?: (callback: () => void, ms: number) => ReturnType<typeof setTimeout>; cancel?: (timer: ReturnType<typeof setTimeout>) => void; storage?: Pick<Storage, "getItem" | "setItem">; }
+/** @deprecated 旧会话余额抽屉类型。 */
+export interface PreviewEntry { account: BalanceAccount; liability: boolean; }
+/** @deprecated 旧会话余额抽屉类型。 */
+export type FooterDot = "neutral" | "warning" | "success";
+/** @deprecated 旧会话余额抽屉类型。 */
+export interface FooterStatus { key: string; dot: FooterDot; }
+/** @deprecated 旧会话余额抽屉实例类型。 */
+export interface BalanceController {
+  readonly state: BalanceControllerState;
+  subscribe(listener: (state: BalanceControllerState) => void): () => void;
+  setSession(sessionId?: string, presetId?: string, compact?: boolean): Promise<void>;
+  probe(): Promise<void>;
+  refresh(): Promise<void>;
+  toggle(open?: boolean): Promise<void>;
+  retry(): Promise<void>;
+  visibleChanged(): void;
+  dispose(): void;
+}
 
 export class BalanceClientError extends Error {
   constructor(public readonly code: string, message: string) { super(message); this.name = "BalanceClientError"; }
@@ -136,8 +163,7 @@ export class AccountsController {
   async activate(): Promise<void> {
     if (this.#disposed) return;
     this.#active = true;
-    if (!this.#state.candidatesLoading) await this.loadCandidates();
-    this.#refreshAfterSelection();
+    await this.#checkCandidates(true);
   }
 
   /** 面板失活（宿主卸载独立页组件）：停止轮询并取消在途请求；同一账本的快照保留在页面内存，
@@ -153,25 +179,41 @@ export class AccountsController {
   visibleChanged(): void {
     if (this.#disposed) return;
     if (!this.#visible()) { this.#stopPageActivity(); return; }
-    if (!this.#active) return;
-    void this.#resumeAfterRecovery();
+    void this.#checkCandidates(true);
   }
 
-  async loadCandidates(): Promise<void> {
-    if (this.#disposed) return;
-    this.#abortCandidates();
-    const request = new AbortController(); this.#candidatesRequest = request;
-    this.#state = { ...this.#state, candidatesLoading: true }; this.emit();
+  loadCandidates(): Promise<void> {
+    return this.#checkCandidates(false);
+  }
+
+  async #checkCandidates(refreshSelection: boolean): Promise<void> {
+    if (this.#disposed || !this.#active || !this.#visible() || this.#candidatesRequest) return;
+    const request = new AbortController();
+    this.#candidatesRequest = request;
+    if (refreshSelection) this.#cancelPollTimer();
+    this.#state = {
+      ...this.#state,
+      candidatesLoading: true,
+      candidatesError: undefined,
+      stale: this.#state.stale || (refreshSelection && Boolean(this.#state.snapshot)),
+    };
+    this.emit();
     try {
       const { candidates } = await this.#rpc.candidates(request.signal);
       if (!this.#currentCandidates(request)) return;
       this.#applyCandidates(candidates);
     } catch (error) {
       if (!this.#currentCandidates(request)) return;
-      // 已有选择时候选失败不阻断余额查询（candidatesError 仅在无选择时呈现）；与零候选可区分。
-      this.#state = { ...this.#state, candidatesLoading: false, candidatesError: this.#state.selection ? this.#state.candidatesError : safeMessage(error) };
+      if (error instanceof BalanceClientError && error.code === "workspace_access_denied") {
+        this.#revokeSelection(safeMessage(error));
+        return;
+      }
+      this.#state = { ...this.#state, candidatesLoading: false, candidatesError: this.#state.selection ? undefined : safeMessage(error) };
       this.emit();
+    } finally {
+      if (this.#candidatesRequest === request) this.#candidatesRequest = undefined;
     }
+    if (refreshSelection && !request.signal.aborted) this.#refreshAfterSelection();
   }
 
   /** 手动选择：立即取消旧余额请求并清空其快照，仅接受候选结果中状态为 candidate 的 ID；
@@ -190,7 +232,7 @@ export class AccountsController {
     const selection = this.#state.selection;
     if (!selection || this.#disposed || !this.#active || !this.#visible()) return;
     // 同一时间只有一个有效余额请求：在途时忽略重复触发（手动刷新与轮询重叠、重合恢复通知亦然）。
-    if (this.#balanceInFlight) return;
+    if (this.#balanceInFlight || this.#candidatesRequest) return;
     this.#abortBalance();
     const request = new AbortController(); this.#balanceRequest = request; this.#balanceInFlight = true;
     this.#state = { ...this.#state, loading: true, error: undefined }; this.emit();
@@ -204,9 +246,7 @@ export class AccountsController {
       if (!this.#currentBalance(selection, request)) return;
       if (error instanceof BalanceClientError && REVOKE_CODES.has(error.code)) {
         // 宿主确认登记已删除或明确拒绝访问：立即清空快照与选择，重取候选并等待用户重新选择。
-        this.#balanceInFlight = false;
-        this.#manualChoiceRequired = true;
-        this.#clearSelection();
+        this.#revokeSelection();
         void this.loadCandidates();
         return;
       }
@@ -221,8 +261,8 @@ export class AccountsController {
    * 登记、初始化或目录修复完成后，用户无需重开页面即可通过重试触发新的预检。 */
   async retry(): Promise<void> {
     if (this.#disposed) return;
-    if (!this.#state.selection) await this.loadCandidates();
-    this.#refreshAfterSelection();
+    if (this.#state.selection) this.#refreshAfterSelection();
+    else await this.#checkCandidates(true);
   }
 
   dispose(): void { this.#disposed = true; this.#active = false; this.#abortCandidates(); this.#abortBalance(); this.#cancelPollTimer(); this.#listeners.clear(); }
@@ -255,13 +295,6 @@ export class AccountsController {
     }
   }
 
-  /** 恢复可见的统一检查入口：候选结果缺失（隐藏期间被取消或尚未取得）时补一次候选检查，
-   * 随后按当前选择立即刷新；已在途的请求使重合通知合并。 */
-  async #resumeAfterRecovery(): Promise<void> {
-    if (this.#state.candidates === undefined && !this.#state.candidatesLoading) await this.loadCandidates();
-    this.#refreshAfterSelection();
-  }
-
   #applyCandidates(candidates: LedgerCandidate[]): void {
     const selected = this.#state.selection;
     // 只有登记消失（不再出现在候选列表）才视为撤销：立即清空快照与选择，其余候选即使只剩一个也等待用户重新选择。
@@ -284,7 +317,7 @@ export class AccountsController {
         this.#manualChoiceRequired = true;
       } else {
         const sole = candidates.filter((item) => item.status === "candidate");
-        if (sole.length === 1) this.#applySelection(sole[0]!, true);
+        if (sole.length === 1) { this.#applySelection(sole[0]!, true); return; }
       }
     }
     this.emit();
@@ -296,6 +329,13 @@ export class AccountsController {
     this.#cancelPollTimer();
     this.#state = { ...this.#state, selection: candidate.workspaceId, selectionTitle: candidate.title, autoSelected: auto, snapshot: undefined, refreshedAt: undefined, stale: false, loading: true, error: undefined };
     this.emit();
+  }
+
+  #revokeSelection(candidatesError?: string): void {
+    this.#manualChoiceRequired = true;
+    this.#abortCandidates();
+    this.#state = { ...this.#state, candidates: undefined, candidatesLoading: false, candidatesError };
+    this.#clearSelection();
   }
 
   #clearSelection(): void {
@@ -367,10 +407,11 @@ export interface PageFooterStatus { key: string; dot: PageFooterDot; }
  * 含义由文字表达。文案键与 bundle 字典的 footer.* 一一对应，与 pageBodyView 同为领域层判定。 */
 export function pageFooterStatus(state: AccountsControllerState): PageFooterStatus {
   if (state.error || state.candidatesError) return { key: "footer.refreshFailed", dot: "warning" };
+  if (state.candidatesLoading) return { key: "footer.checkingLedgers", dot: "neutral" };
   if (state.loading) return { key: state.snapshot ? "footer.refreshing" : "footer.waitingLedger", dot: "neutral" };
   if (state.stale) return { key: "footer.stale", dot: "warning" };
   if (state.snapshot && !state.snapshot.assets.accounts.length && !state.snapshot.liabilities.accounts.length) return { key: "footer.noData", dot: "neutral" };
   if (state.snapshot) return { key: "footer.updated", dot: "success" };
   if (state.candidates?.length) return { key: "footer.awaiting", dot: "neutral" };
-  return { key: "footer.zero", dot: "neutral" };
+  return { key: state.candidates ? "footer.zero" : "footer.checkingLedgers", dot: "neutral" };
 }

@@ -1,5 +1,8 @@
+import { constants } from "node:fs";
 import { access, stat } from "node:fs/promises";
-import { join } from "node:path";
+import * as platformPath from "node:path";
+
+const { join } = platformPath;
 
 /** DSH workspaceRegistry 登记记录的本地结构类型（WorkspaceEntity 的必需字段子集；
  * 0.2.2-rc.5 app.asar 实证：id、规范绝对路径 path、显示名 title）。 */
@@ -34,33 +37,45 @@ export async function ledgerCandidates(entities: unknown): Promise<LedgerCandida
 
 function displayTitle(entity: RegistryEntity, path: string): string {
   if (typeof entity.title === "string" && entity.title) return entity.title;
-  return path.split(/[\\/]+/u).filter(Boolean).at(-1) ?? path;
+  return platformPath.basename(path) || "Ledger";
 }
 
 /** 布局入口预检（ADR-0006/spec 候选预检结果表）：
  * 工作区或预检文件不可访问 → unavailable；default/ 未创建 → uninitialized；
  * default/ 存在但缺少 main.beancount 或入口不是常规文件 → invalid_layout；其余 → candidate。 */
 async function precheckWorkspace(workspace: string): Promise<LedgerCandidateStatus> {
-  if (await probePath(workspace) !== "ok") return "unavailable";
-  const ledgerDirectory = await probePath(join(workspace, "default"));
-  if (ledgerDirectory === "missing") return "uninitialized";
-  if (ledgerDirectory !== "ok") return "unavailable";
-  const entry = join(workspace, "default", "main.beancount");
-  const main = await probePath(entry);
-  if (main === "missing") return "invalid_layout";
-  if (main !== "ok") return "unavailable";
-  try { if (!(await stat(entry)).isFile()) return "invalid_layout"; } catch { return "unavailable"; }
-  return "candidate";
+  const directoryAccess = constants.R_OK | constants.X_OK;
+  try {
+    if (!(await stat(workspace)).isDirectory()) return "unavailable";
+    await access(workspace, directoryAccess);
+    const directory = join(workspace, "default");
+    const directoryInfo = await statIfPresent(directory);
+    if (!directoryInfo) return "uninitialized";
+    if (!directoryInfo.isDirectory()) return "invalid_layout";
+    await access(directory, directoryAccess);
+    const entry = join(directory, "main.beancount");
+    if (!(await statIfPresent(entry))?.isFile()) return "invalid_layout";
+    await access(entry, constants.R_OK);
+    return "candidate";
+  } catch {
+    return "unavailable";
+  }
 }
 
-/** 访问结果三态：区分 ENOENT（可判定为未创建）与其他错误（视为暂时不可访问）。 */
+async function statIfPresent(path: string) {
+  try { return await stat(path); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
+  }
+}
+
+/** 余额路由用此检查登记路径是否可达，完整布局仍由余额引擎验证。 */
 export async function probePath(path: string): Promise<"ok" | "missing" | "error"> {
   try { await access(path); return "ok"; }
   catch (error) { return (error as NodeJS.ErrnoException).code === "ENOENT" ? "missing" : "error"; }
 }
 
-/** 只有同名候选需要目录提示（ADR-0006）：组内逐级上溯取首个能区分各候选的目录尾段，
- * 以 "/" 连接展示；尾段永不以分隔符开头，因此不会泄露绝对路径。 */
 function withDirectoryHints(items: LedgerEntry[]): LedgerCandidate[] {
   const groups = new Map<string, Array<Pick<LedgerEntry, "workspaceId" | "path">>>();
   for (const item of items) {
@@ -72,7 +87,7 @@ function withDirectoryHints(items: LedgerEntry[]): LedgerCandidate[] {
   const hints = new Map<string, string>();
   for (const group of groups.values()) {
     if (group.length < 2) continue;
-    for (const [index, hint] of distinguishingTails(group.map((item) => item.path)).entries()) {
+    for (const [index, hint] of directoryHints(group).entries()) {
       hints.set(group[index]!.workspaceId, hint);
     }
   }
@@ -82,16 +97,27 @@ function withDirectoryHints(items: LedgerEntry[]): LedgerCandidate[] {
   });
 }
 
-function distinguishingTails(paths: string[]): string[] {
-  const segments = paths.map((path) => path.split(/[\\/]+/u).filter(Boolean));
-  return segments.map((own, index) => {
-    let size = 1;
-    while (size < own.length && !tailIsUnique(segments, index, size)) size += 1;
-    return own.slice(-size).join("/");
+/** 仅公开无根目录尾段。整组无法区分时，改用已对外公开的工作区 ID。 */
+export function directoryHints(
+  group: ReadonlyArray<Pick<LedgerEntry, "workspaceId" | "path">>,
+  pathApi: {
+    normalize(path: string): string;
+    parse(path: string): { root: string };
+    sep: string;
+    isAbsolute(path: string): boolean;
+  } = platformPath,
+): string[] {
+  const segments = group.map(({ path }) => {
+    const normalized = pathApi.normalize(path);
+    return normalized.slice(pathApi.parse(normalized).root.length).split(pathApi.sep).filter(Boolean);
   });
-}
-
-function tailIsUnique(segments: string[][], index: number, size: number): boolean {
-  const own = segments[index]!.slice(-size).join("/");
-  return segments.every((other, position) => position === index || other.slice(-size).join("/") !== own);
+  const hints = segments.map((own, index) => {
+    for (let size = 1; size <= own.length; size += 1) {
+      const tail = own.slice(-size).join("/");
+      if (!pathApi.isAbsolute(tail) && segments.every((other, position) => position === index || other.slice(-size).join("/") !== tail)) return tail;
+    }
+    return undefined;
+  });
+  if (hints.some((hint) => hint === undefined)) return group.map(({ workspaceId }) => `#${workspaceId}`);
+  return hints as string[];
 }

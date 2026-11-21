@@ -14,6 +14,7 @@ window.__ModuleLoader__.load({ id: "dsh-moneypal", factory: (require) => {
     "panel.title": "恰恰账本",
     "page.title": "恰恰账本",
     "page.asOf": "截至 {date}",
+    "page.switchLedger": "切换账本",
     "page.refresh": "刷新余额",
     "page.recheck": "重新检测账本",
     "group.assets": "资产",
@@ -48,6 +49,7 @@ window.__ModuleLoader__.load({ id: "dsh-moneypal", factory: (require) => {
     "footer.refreshFailed": "刷新失败",
     "footer.refreshing": "正在刷新…",
     "footer.waitingLedger": "等待账本响应",
+    "footer.checkingLedgers": "正在检测账本…",
     "footer.stale": "余额待更新",
     "footer.noData": "暂无余额数据",
     "footer.updated": "余额已更新",
@@ -60,6 +62,7 @@ window.__ModuleLoader__.load({ id: "dsh-moneypal", factory: (require) => {
     "panel.title": "MoneyPal Ledger",
     "page.title": "MoneyPal Ledger",
     "page.asOf": "As of {date}",
+    "page.switchLedger": "Switch ledger",
     "page.refresh": "Refresh balances",
     "page.recheck": "Re-check ledgers",
     "group.assets": "Assets",
@@ -94,6 +97,7 @@ window.__ModuleLoader__.load({ id: "dsh-moneypal", factory: (require) => {
     "footer.refreshFailed": "Refresh failed",
     "footer.refreshing": "Refreshing…",
     "footer.waitingLedger": "Waiting for the ledger",
+    "footer.checkingLedgers": "Checking ledgers…",
     "footer.stale": "Balances need updating",
     "footer.noData": "No balance data",
     "footer.updated": "Balances updated",
@@ -102,9 +106,6 @@ window.__ModuleLoader__.load({ id: "dsh-moneypal", factory: (require) => {
     "footer.awaiting": "Waiting for a ledger choice",
     "footer.zero": "No ledger to view",
   };
-  function fill(template, params) {
-    return params ? template.replace(/\{(\w+)\}/gu, (whole, key) => Object.prototype.hasOwnProperty.call(params, key) ? String(params[key]) : whole) : template;
-  }
   function setupLocale(ctx) {
     const locale = ctx.locale;
     if (!locale || typeof locale.register !== "function" || typeof locale.bind !== "function") {
@@ -217,13 +218,35 @@ window.__ModuleLoader__.load({ id: "dsh-moneypal", factory: (require) => {
         item.selectable ? null : React.createElement("span", { className: cls("choice-status") }, t(item.statusKey)),
         item.selectable ? null : React.createElement("span", { className: cls("choice-guide") }, t(item.guideKey)))));
   }
-  function PageHeader({ state, onRefresh, t, locale }) {
+  function LedgerPicker({ state, onSelect, t }) {
+    if (!state.selection) return null;
+    const candidates = state.candidates ?? [];
+    const choices = candidates.filter((item) => item.status === "candidate" || item.workspaceId === state.selection);
+    if (!choices.some((item) => item.workspaceId !== state.selection)) {
+      return React.createElement("span", { className: cls("ledger-name"), translate: "no" }, state.selectionTitle);
+    }
+    if (!choices.some((item) => item.workspaceId === state.selection)) {
+      choices.unshift({ workspaceId: state.selection, title: state.selectionTitle });
+    }
+    return React.createElement("select", {
+      className: cls("ledger-picker"),
+      "aria-label": t("page.switchLedger"),
+      translate: "no",
+      value: state.selection,
+      onChange: (event) => onSelect(event.currentTarget.value),
+    }, choices.map((item) => React.createElement("option", {
+      key: item.workspaceId,
+      value: item.workspaceId,
+      disabled: item.status !== "candidate",
+    }, item.directoryHint ? `${item.title} · ${item.directoryHint}` : item.title)));
+  }
+  function PageHeader({ state, onRefresh, onSelect, t, locale }) {
     const snapshot = state.snapshot;
     return React.createElement("header", { className: cls("toolbar") },
       React.createElement("div", { className: cls("title") },
         React.createElement("h2", null, t("page.title")),
-        React.createElement("small", { className: cls("subtitle") },
-          state.selectionTitle ? React.createElement("span", { className: cls("ledger-name"), translate: "no" }, state.selectionTitle) : null,
+        React.createElement("div", { className: cls("subtitle") },
+          React.createElement(LedgerPicker, { state, onSelect, t }),
           snapshot ? React.createElement("span", null, t("page.asOf", { date: fmtAsOf(snapshot.asOf, locale) })) : null)),
       React.createElement(Icon, { label: state.selection ? t("page.refresh") : t("page.recheck"), onClick: onRefresh, disabled: state.loading || state.candidatesLoading }));
   }
@@ -240,6 +263,9 @@ window.__ModuleLoader__.load({ id: "dsh-moneypal", factory: (require) => {
       const snapshot = state.snapshot;
       const multipleCommodities = new Set([...snapshot.assets.totals, ...snapshot.liabilities.totals].map((amount) => amount.commodity)).size > 1;
       return React.createElement(React.Fragment, null,
+        React.createElement("div", { className: cls("overview") },
+          React.createElement(Summary, { title: t("group.assets"), data: snapshot.assets, liability: false, t, locale }),
+          React.createElement(Summary, { title: t("group.liabilities"), data: snapshot.liabilities, liability: true, t, locale })),
         React.createElement(Details, { snapshot, t, locale }),
         multipleCommodities ? React.createElement("p", { className: cls("caption-line") }, t("overview.caption")) : null);
     }
@@ -272,16 +298,21 @@ window.__ModuleLoader__.load({ id: "dsh-moneypal", factory: (require) => {
      * 控制器把它与 workspace_not_registered 同等清空；其余传输失败（含 401 与 5xx）保持原样走可重试路径，不等同于登记移除。
      * 适配器持有 apply 注入的 ctx：模块作用域没有 ctx，抽出去会成为运行时 ReferenceError。 */
     const rpcCall = async (method, payload, signal) => {
-      try { return await ctx.connection.rpc.call("/api", method, payload, signal); }
+      let outer;
+      try { outer = await ctx.connection.rpc.call("/api", method, payload, signal); }
       catch (error) {
         if (runtime.rpcAccessDenied(error)) throw new runtime.BalanceClientError("workspace_access_denied", "宿主拒绝了本次访问，请稍后重试。");
         throw error;
       }
+      if (!outer?.ok) throw callError();
+      const inner = outer.value;
+      if (!inner?.ok) throw callError(inner?.error);
+      return inner.value;
     };
     const controller = new runtime.AccountsController({
       rpc: {
-        candidates: async (signal) => { const outer = await rpcCall("dsh-moneypal/ledger-candidates", {}, signal); if (!outer?.ok) throw callError(); const inner = outer.value; if (!inner?.ok) throw callError(inner?.error); return inner.value; },
-        balances: async (workspaceId, asOf, signal) => { const outer = await rpcCall("dsh-moneypal/ledger-balances", { workspaceId, asOf }, signal); if (!outer?.ok) throw callError(); const inner = outer.value; if (!inner?.ok) throw callError(inner?.error); return inner.value; },
+        candidates: (signal) => rpcCall("dsh-moneypal/ledger-candidates", {}, signal),
+        balances: (workspaceId, asOf, signal) => rpcCall("dsh-moneypal/ledger-balances", { workspaceId, asOf }, signal),
       },
       // 手动选择的工作区 ID 持久化到浏览器 localStorage；受限浏览器的属性访问也可能抛错，整体降级为仅本次运行期有效。
       storage: (() => { try { return window.localStorage; } catch { return undefined; } })(),
@@ -334,11 +365,12 @@ window.__ModuleLoader__.load({ id: "dsh-moneypal", factory: (require) => {
       };
       // 页脚状态判定集中在 runtime.pageFooterStatus（固定顺序、领域层测试覆盖），此处只做状态到元素的映射。
       const status = runtime.pageFooterStatus(state);
+      const select = (workspaceId) => void controller.select(workspaceId);
       return React.createElement("div", { className: cls("page") },
-        React.createElement(PageHeader, { state, onRefresh: reload, t, locale }),
+        React.createElement(PageHeader, { state, onRefresh: reload, onSelect: select, t, locale }),
         state.snapshot && state.stale ? React.createElement(Banner, { state, onRetry: reload, t, locale }) : null,
         React.createElement("div", { className: cls("content") },
-          pageBodyFor({ state, onRefresh: reload, onRetry: reload, onSelect: (workspaceId) => void controller.select(workspaceId), t, locale })),
+          pageBodyFor({ state, onRefresh: reload, onRetry: reload, onSelect: select, t, locale })),
         React.createElement("footer", { className: cls("footer") },
           React.createElement("span", null, React.createElement("i", { className: cls("dot", `dot-${status.dot}`), "aria-hidden": "true" }), t(status.key)),
           React.createElement("span", null, freshLabel({ state, snapshot: state.snapshot, t, locale }))));
