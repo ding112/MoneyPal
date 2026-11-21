@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { access, mkdir, mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -47,8 +47,34 @@ async function audit(item) {
   await assertNoSourceMaps(packageDirectory, item.name);
   await run(process.execPath, [join(install, "node_modules", ".bin", item.name), "runtime-status"], install);
   await assertExportsLoadable(install, item.name, manifest.exports);
+  await assertLegacyClientTypes(install);
   await access(join(install, "node_modules", item.name, "dist", "src", "client.bundle.cjs"));
   await run(process.execPath, ["--check", join(install, "node_modules", item.name, "dist", "src", "client.bundle.cjs")], install);
+}
+
+async function assertLegacyClientTypes(install) {
+  const source = join(install, "legacy-client.mts");
+  await writeFile(source, `
+import type {
+  BalanceController, BalanceControllerOptions, BalanceControllerState,
+  BalanceRpc, Capability, FooterDot, FooterStatus, PreviewEntry,
+} from "dsh-moneypal/client";
+export type LegacyClient = [
+  BalanceController, BalanceControllerOptions, BalanceControllerState,
+  BalanceRpc, Capability, FooterDot, FooterStatus, PreviewEntry,
+];
+export async function exercise(controller: BalanceController, options: BalanceControllerOptions) {
+  const state: BalanceControllerState = controller.state;
+  await options.rpc.capability("session", new AbortController().signal);
+  await controller.setSession("session");
+  await controller.toggle();
+  return state.capability;
+}
+`);
+  await run(process.execPath, [
+    join(root, "node_modules", "typescript", "bin", "tsc"),
+    "--strict", "--noEmit", "--target", "ES2024", "--module", "NodeNext", source,
+  ], install);
 }
 
 async function assertNoSourceMaps(directory, name) {
